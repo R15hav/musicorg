@@ -113,6 +113,8 @@ class _PhaseCard(QFrame):
 class DashboardScreen(QWidget):
     """Phase-card dashboard for one open library."""
 
+    run_requested = Signal(str)  # phase key — handled by MainWindow
+
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self._cfg: Config | None = None
@@ -179,14 +181,19 @@ class DashboardScreen(QWidget):
             else:
                 card.set_status("Not run", can_run=False, button_label="Run")
 
+    # Phases whose worker is wired and ready to drive from the dashboard.
+    _IMPLEMENTED: frozenset[str] = frozenset({"dedupe"})
+
     @Slot(str)
     def _on_run(self, phase_key: str) -> None:
+        if phase_key in self._IMPLEMENTED:
+            self.run_requested.emit(phase_key)
+            return
         phase = next((p for p in _PHASES if p.key == phase_key), None)
         title = phase.title if phase else phase_key
         QMessageBox.information(
             self,
             title,
             "This phase is coming in the next slice — the worker isn't wired yet.\n\n"
-            "Order: scan → dedupe → resolve → plan → execute → canonicalize → upgrade.\n\n"
-            "For now, Continue from the Welcome screen runs the scan and brings you here.",
+            "Order: scan → dedupe → resolve → plan → execute → canonicalize → upgrade.",
         )
