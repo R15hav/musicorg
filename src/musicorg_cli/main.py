@@ -332,71 +332,35 @@ def canonicalize_cmd(
         err.print("[yellow]Shazam circuit breaker is tripped — skipping that tier.[/yellow]")
         requested = [t for t in requested if t != "shazam"]
 
-    # Drive via the in-package chain(): walk every audio file under cfg.root_path/Music.
     music_root = cfg.root_path / "Music"
     if not music_root.exists():
         err.print(f"[red]no organized music tree at {music_root} (run apply first)[/red]")
         raise typer.Exit(2)
 
-    from musicorg.tags import AUDIO_EXTS, read as read_tags
-    from musicorg.lookup import chain
+    from musicorg import canonicalize_library
 
-    files: list[Path] = []
-    for p in music_root.rglob("*"):
-        if not p.is_file(): continue
-        if p.suffix.lower() not in AUDIO_EXTS: continue
-        if any(part in {"_duplicates", "_misc", "_replaced", "_upgrade_staging"} for part in p.parts):
-            continue
-        files.append(p)
-    files.sort()
-    _info(f"canonicalize: {len(files)} files, tiers={requested}")
+    # Count files up front so the progress bar has a total.
+    from musicorg.tags import AUDIO_EXTS
+    file_total = sum(
+        1 for p in music_root.rglob("*")
+        if p.is_file() and p.suffix.lower() in AUDIO_EXTS
+        and not any(part in {"_duplicates", "_misc", "_replaced", "_upgrade_staging"} for part in p.parts)
+    )
+    _info(f"canonicalize: {file_total} files, tiers={requested}")
 
-    merged_path = state / "16_merged.csv"
-    fieldnames = [
-        "source_path", "decision", "confidence",
-        "cur_title", "cur_artist", "cur_album", "cur_year", "cur_track", "cur_duration", "query",
-        "api_title", "api_artist", "api_album", "api_year", "api_track_num", "api_genre",
-        "api_duration", "api_track_view_url",
-        "title_score", "artist_score", "duration_score",
-        "album_bonus", "year_penalty", "version_penalty", "sparse_cap",
-        "apple_music_url", "adam_id", "storefront", "isrc",
-        "jio_title", "jio_artist", "jio_album", "jio_year", "jio_language", "jio_perma_url",
-        "shazam_title", "shazam_artist", "shazam_album", "shazam_year",
-        "shazam_label", "shazam_isrc", "shazam_key", "shazam_url", "shazam_genre", "shazam_image",
-    ]
-
-    stats = {"auto_apply": 0, "review": 0, "low": 0, "no_match": 0}
-    with merged_path.open("w", newline="", encoding="utf-8") as f, Progress(
+    with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(), TaskProgressColumn(), TimeElapsedColumn(),
         console=err, disable=_G.quiet,
     ) as bar:
-        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        w.writeheader()
-        task = bar.add_task("lookup", total=len(files))
-        for i, p in enumerate(files, 1):
-            track = read_tags(p)
-            best, decision = chain(track, cfg)
-            parts = best.score_parts if best else {}
-            stats[decision] = stats.get(decision, 0) + 1
-            row = {"source_path": str(p), "decision": decision,
-                   "confidence": getattr(best, "confidence", 0.0) if best else 0.0,
-                   "cur_title": track.title, "cur_artist": track.artist,
-                   "cur_album": track.album, "cur_year": track.year, "cur_track": track.track,
-                   "cur_duration": track.duration_sec}
-            if best:
-                row.update({
-                    "api_title": best.title, "api_artist": best.artist, "api_album": best.album,
-                    "api_year": best.year, "api_track_num": best.track_num, "api_genre": best.genre,
-                    "api_track_view_url": best.apple_music_url,
-                    "apple_music_url": best.apple_music_url, "adam_id": best.adam_id,
-                    "storefront": best.storefront, "isrc": best.isrc,
-                })
-                for k, v in (parts or {}).items():
-                    row[k] = v
-            w.writerow(row)
-            bar.update(task, advance=1)
+        task = bar.add_task("lookup", total=file_total)
 
+        def on_progress(ev):
+            bar.update(task, completed=ev.current)
+
+        stats = canonicalize_library(cfg, music_root=music_root, progress=on_progress)
+
+    merged_path = state / "16_merged.csv"
     _info(f"[green]wrote[/green] {merged_path}")
     _emit(stats)
 

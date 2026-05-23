@@ -49,6 +49,7 @@ from .canonicalize import (
     apply as apply_canonical,
     apply_approvals,
     build_diff,
+    canonicalize_library,
     pick_source_for_row,
 )
 from .executor import execute_plan, run_undo
@@ -163,6 +164,7 @@ __all__ = [
     "apply_canonical",
     "apply_approvals",
     "build_diff",
+    "canonicalize_library",
     "pick_source_for_row",
     # Execute phase
     "execute_plan",

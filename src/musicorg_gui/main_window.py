@@ -19,7 +19,7 @@ from musicorg import Config
 
 from .library_index import KnownLibrary
 from .platform import state_root
-from .screens import CompletionScreen, PipelineScreen, UndoScreen, WelcomeScreen
+from .screens import CompletionScreen, MetadataScreen, PipelineScreen, UndoScreen, WelcomeScreen
 from .workers import ApplyMode
 
 
@@ -38,8 +38,9 @@ class MainWindow(QMainWindow):
         self._pipeline = PipelineScreen(self)
         self._completion = CompletionScreen(self)
         self._undo = UndoScreen(self)
+        self._metadata = MetadataScreen(self)
 
-        for screen in (self._welcome, self._pipeline, self._completion, self._undo):
+        for screen in (self._welcome, self._pipeline, self._completion, self._undo, self._metadata):
             self._stack.addWidget(screen)
         self._stack.setCurrentWidget(self._welcome)
 
@@ -50,7 +51,9 @@ class MainWindow(QMainWindow):
         self._pipeline.failed_out.connect(lambda _msg: None)  # handled inside pipeline; nav stays
         self._completion.restart_requested.connect(self._go_to_welcome)
         self._completion.undo_requested.connect(self._show_undo)
+        self._completion.metadata_requested.connect(self._show_metadata)
         self._undo.back_requested.connect(self._show_completion)
+        self._metadata.back_requested.connect(self._show_completion)
 
     @Slot(object, object, str)
     def _on_start_requested(self, cfg: Config, root: Path, mode: str) -> None:
@@ -105,3 +108,9 @@ class MainWindow(QMainWindow):
         # Reached only after viewing undo history; the Completion screen
         # is already populated from the prior pipeline run.
         self._stack.setCurrentWidget(self._completion)
+
+    def _show_metadata(self) -> None:
+        if self._active_cfg is None:
+            return
+        self._stack.setCurrentWidget(self._metadata)
+        self._metadata.show_for(self._active_cfg)

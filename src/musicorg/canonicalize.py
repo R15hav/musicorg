@@ -20,7 +20,10 @@ from typing import Any
 
 from . import backup, tags as tags_mod
 from .clean import safe_filename, TRACK_PREFIX_RX
+from .config import Config, DEFAULT_EXCLUDE_DIR_NAMES
+from .lookup import chain
 from .models import ApplyResult, ProgressEvent
+from .tags import AUDIO_EXTS, read as read_tags
 
 
 logger = logging.getLogger(__name__)
@@ -708,3 +711,124 @@ def apply_approvals(
     result.snapshot_path = snapshot_path
     result.undo_script_path = undo_script_path
     return result
+
+
+# ---------------------------------------------------------------------------
+# Batch canonicalize entry point (used by CLI and GUI)
+# ---------------------------------------------------------------------------
+
+_MERGED_FIELDS: list[str] = [
+    "source_path", "decision", "confidence",
+    "cur_title", "cur_artist", "cur_album", "cur_year", "cur_track", "cur_duration", "query",
+    "api_title", "api_artist", "api_album", "api_year", "api_track_num", "api_genre",
+    "api_duration", "api_track_view_url",
+    "title_score", "artist_score", "duration_score",
+    "album_bonus", "year_penalty", "version_penalty", "sparse_cap",
+    "apple_music_url", "adam_id", "storefront", "isrc",
+    "jio_title", "jio_artist", "jio_album", "jio_year", "jio_language", "jio_perma_url",
+    "shazam_title", "shazam_artist", "shazam_album", "shazam_year",
+    "shazam_label", "shazam_isrc", "shazam_key", "shazam_url", "shazam_genre", "shazam_image",
+]
+
+
+def canonicalize_library(
+    cfg: Config,
+    music_root: Path | None = None,
+    *,
+    progress: Callable[[ProgressEvent], None] | None = None,
+) -> dict[str, int]:
+    """Walk the organized music tree, run per-file tier lookups, write 16_merged.csv.
+
+    ``music_root`` defaults to ``cfg.root_path / "Music"`` (the standard
+    post-organize layout from :func:`execute_plan`). Each audio file is
+    read with :func:`tags.read` and passed through :func:`lookup.chain`
+    to get the best-scoring tier match and a decision bucket. Results
+    are written one row per file to ``<state_dir>/16_merged.csv``.
+
+    Returns the bucket counts as ``{"auto_apply": N, "review": N,
+    "low": N, "no_match": N}``. Internal directories (``_duplicates``,
+    ``_misc``, ``_replaced``, ``_upgrade_staging``) are excluded at any
+    depth. Per-file lookup errors are logged and reported via the
+    progress callback with ``error=True``; they do not abort the batch.
+    """
+    root = music_root if music_root is not None else (cfg.root_path / "Music")
+    state_dir = cfg.state_path
+    state_dir.mkdir(parents=True, exist_ok=True)
+    merged_path = state_dir / "16_merged.csv"
+
+    files: list[Path] = []
+    if root.exists():
+        for p in root.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.suffix.lower() not in AUDIO_EXTS:
+                continue
+            if any(part in DEFAULT_EXCLUDE_DIR_NAMES for part in p.parts):
+                continue
+            files.append(p)
+        files.sort()
+
+    total = len(files)
+    stats: dict[str, int] = {"auto_apply": 0, "review": 0, "low": 0, "no_match": 0}
+
+    with merged_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=_MERGED_FIELDS, extrasaction="ignore")
+        w.writeheader()
+
+        for i, p in enumerate(files, 1):
+            try:
+                track = read_tags(p)
+                best, decision = chain(track, cfg)
+            except Exception as exc:
+                logger.warning("canonicalize: lookup failed for %s: %s", p, exc)
+                if progress is not None:
+                    progress(ProgressEvent(
+                        phase="canonicalize", current=i, total=total, path=str(p),
+                        message=f"Lookup failed: {exc}", error=True,
+                    ))
+                continue
+
+            parts = getattr(best, "score_parts", None) or {}
+            stats[decision] = stats.get(decision, 0) + 1
+            row: dict[str, Any] = {
+                "source_path": str(p),
+                "decision": decision,
+                "confidence": float(getattr(best, "confidence", 0.0) or 0.0),
+                "cur_title": track.title,
+                "cur_artist": track.artist,
+                "cur_album": track.album,
+                "cur_year": track.year,
+                "cur_track": track.track,
+                "cur_duration": track.duration_sec,
+            }
+            if best:
+                row.update({
+                    "api_title": getattr(best, "title", ""),
+                    "api_artist": getattr(best, "artist", ""),
+                    "api_album": getattr(best, "album", ""),
+                    "api_year": getattr(best, "year", ""),
+                    "api_track_num": getattr(best, "track_num", ""),
+                    "api_genre": getattr(best, "genre", ""),
+                    "api_track_view_url": getattr(best, "apple_music_url", ""),
+                    "apple_music_url": getattr(best, "apple_music_url", ""),
+                    "adam_id": getattr(best, "adam_id", ""),
+                    "storefront": getattr(best, "storefront", ""),
+                    "isrc": getattr(best, "isrc", ""),
+                })
+                for k, v in parts.items():
+                    row[k] = v
+            w.writerow(row)
+
+            if progress is not None:
+                track_msg = f"{track.title or p.name}"
+                if best:
+                    conf = float(getattr(best, "confidence", 0.0) or 0.0)
+                    track_msg += f" → {getattr(best, 'title', '')} ({decision}, {conf:.2f})"
+                else:
+                    track_msg += f" → {decision}"
+                progress(ProgressEvent(
+                    phase="canonicalize", current=i, total=total, path=str(p),
+                    message=track_msg,
+                ))
+
+    return stats

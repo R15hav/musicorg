@@ -77,6 +77,7 @@ Current version: `0.2.0` (pre-v1.0; API stabilization in progress).
 | Name | Kind | Summary |
 |---|---|---|
 | `apply_canonical(diff_csv, merged_csv, snapshot_path, undo_script_path, *, dry_run=False, rename=True, include_low=False, source_preference=None, progress=None) -> ApplyResult` | function | Apply the `17_dryrun_diff.csv` to write tags and rename files. Snapshots before every write; undo script updated incrementally. (Renamed from `canonicalize.apply` to avoid shadowing.) |
+| `canonicalize_library(cfg, music_root=None, *, progress=None) -> dict[str, int]` | function | Walk the organized music tree, run tiered iTunes → JioSaavn → Shazam lookups per file, write `16_merged.csv`. Returns `{"auto_apply": N, "review": N, "low": N, "no_match": N}`. Excludes the standard internal directories. Per-file errors are reported via `progress` with `error=True` but don't abort the batch. |
 | `apply_approvals(merged_csv, approvals_json, snapshot_path, undo_script_path, *, dry_run=False, rename=True, progress=None) -> ApplyResult` | function | Apply user approvals from `19_approvals.json`. Supports `itunes`, `jiosaavn`, `shazam`, `manual`, and `skip` picks. |
 | `build_diff(merged_csv_path, dryrun_csv_out, promote_set=None) -> dict` | function | Compute per-row tag diff and write `17_dryrun_diff.csv`. Returns field-action and source counters. |
 | `pick_source_for_row(row, preference) -> tuple[dict | None, str]` | function | Return `(fields_dict, source_label)` from a merged-CSV row following the preference order. |
