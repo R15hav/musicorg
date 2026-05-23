@@ -20,6 +20,7 @@ Flags:
 ./install.sh --full         # everything non-interactive (system + Shazam + gamdl)
 ./install.sh --base         # CLI only, no Shazam, no gamdl
 ./install.sh --user         # install into ~/.local instead of .venv/
+./install.sh --no-run       # install only — don't launch the app afterwards
 ./install.sh --uninstall    # remove the app (leaves config + state)
 ./install.sh --skip-system  # don't touch system packages
 ```
@@ -28,7 +29,7 @@ The installer:
 1. Detects your distro (apt / dnf / pacman / zypper / apk) and installs `ffmpeg`, `mediainfo`, `xdg-utils`.
 2. Creates a venv at `.venv/` (falls back to `--user` if `python3-venv` isn't installable).
 3. Installs `musicorg` editable, plus the optional `[shazam]` and `gamdl` extras on consent.
-4. Verifies that the `musicorg` command launches.
+4. **Launches the wizard immediately** — `./install.sh` is enough to install *and* run; pass `--no-run` to skip the launch.
 
 ---
 

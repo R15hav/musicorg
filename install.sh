@@ -7,10 +7,11 @@
 #   - Optional: shazamio (Shazam audio fingerprinting), gamdl (Apple Music ALAC downloader)
 #
 # Usage:
-#   ./install.sh                  # interactive: asks before installing optional pieces
-#   ./install.sh --full           # install everything non-interactively
-#   ./install.sh --base           # base only (no Shazam, no gamdl)
+#   ./install.sh                  # interactive: asks before installing optional pieces, then launches the app
+#   ./install.sh --full           # install everything non-interactively, then launches the app
+#   ./install.sh --base           # base only (no Shazam, no gamdl), then launches the app
 #   ./install.sh --user           # install into ~/.local instead of a venv
+#   ./install.sh --no-run         # install only — don't launch the app afterwards
 #   ./install.sh --uninstall      # remove the app
 
 set -euo pipefail
@@ -33,6 +34,7 @@ MODE=interactive       # interactive | full | base
 USE_USER=0
 DO_UNINSTALL=0
 SKIP_SYSTEM=0
+NO_RUN=0
 for arg in "$@"; do
     case "$arg" in
         --full)      MODE=full ;;
@@ -40,8 +42,9 @@ for arg in "$@"; do
         --user)      USE_USER=1 ;;
         --uninstall) DO_UNINSTALL=1 ;;
         --skip-system) SKIP_SYSTEM=1 ;;
+        --no-run)    NO_RUN=1 ;;
         -h|--help)
-            sed -n '2,15p' "$0"; exit 0 ;;
+            sed -n '2,16p' "$0"; exit 0 ;;
         *) die "unknown flag: $arg" ;;
     esac
 done
@@ -206,21 +209,41 @@ else
     fi
 fi
 
-# ─── done ────────────────────────────────────────────────────────────────────
+# ─── launch ──────────────────────────────────────────────────────────────────
 echo
-say "${C_BOLD}done.${C_OFF}"
-echo
+say "${C_BOLD}install complete.${C_OFF}"
+
+# Resolve the musicorg binary to launch.
 if [ "$USE_USER" -eq 0 ]; then
-    echo "To run the guided wizard:"
-    echo "  ${C_BOLD}$BIN_PATH/musicorg${C_OFF}"
-    echo
-    echo "Or activate the venv first:"
-    echo "  ${C_BOLD}. $VENV_DIR/bin/activate${C_OFF}"
-    echo "  ${C_BOLD}musicorg${C_OFF}"
+    MUSICORG_BIN="$VENV_DIR/bin/musicorg"
 else
-    echo "To run the guided wizard:"
-    echo "  ${C_BOLD}musicorg${C_OFF}"
+    MUSICORG_BIN="$(command -v musicorg || true)"
+    [ -z "$MUSICORG_BIN" ] && MUSICORG_BIN="$HOME/.local/bin/musicorg"
 fi
+
+if [ "$NO_RUN" -eq 1 ]; then
+    echo
+    echo "Launch later with:"
+    echo "  ${C_BOLD}$MUSICORG_BIN${C_OFF}"
+    if [ "$USE_USER" -eq 1 ] && ! command -v musicorg >/dev/null 2>&1; then
+        echo
+        warn "musicorg not on PATH yet — add to your shell rc:"
+        echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+    exit 0
+fi
+
+if [ ! -x "$MUSICORG_BIN" ]; then
+    die "cannot find musicorg binary at $MUSICORG_BIN — install may have failed"
+fi
+
 echo
-echo "${C_DIM}Tip: the bare 'musicorg' command launches the interactive wizard.${C_OFF}"
-echo "${C_DIM}     'musicorg --help' lists all individual commands for power users.${C_OFF}"
+say "launching musicorg…"
+echo "${C_DIM}(launching via: $MUSICORG_BIN — pass --no-run to install.sh next time to skip this step)${C_OFF}"
+echo
+
+# `exec` replaces this shell with the python process so Ctrl+C and the exit
+# code route cleanly to the user, with no orphan shell wrapper. Install-time
+# flags ($@) are install.sh's own; musicorg is launched with no args so the
+# bare `musicorg` command drops into the wizard.
+exec "$MUSICORG_BIN"
