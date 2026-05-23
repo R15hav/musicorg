@@ -8,6 +8,7 @@ from .plan_worker import PlanWorker
 from .resolve_worker import ResolveWorker
 from .scan_worker import ScanWorker
 from .undo_worker import UndoWorker
+from .upgrade_worker import UpgradeWorker
 
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "ResolveWorker",
     "ScanWorker",
     "UndoWorker",
+    "UpgradeWorker",
 ]

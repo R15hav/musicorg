@@ -19,7 +19,15 @@ from musicorg import Config
 
 from .library_index import KnownLibrary
 from .platform import state_root
-from .screens import CompletionScreen, MetadataScreen, PipelineScreen, UndoScreen, WelcomeScreen
+from .screens import (
+    CompletionScreen,
+    GamdlSetupScreen,
+    MetadataScreen,
+    PipelineScreen,
+    UndoScreen,
+    UpgradeScreen,
+    WelcomeScreen,
+)
 from .workers import ApplyMode
 
 
@@ -39,8 +47,18 @@ class MainWindow(QMainWindow):
         self._completion = CompletionScreen(self)
         self._undo = UndoScreen(self)
         self._metadata = MetadataScreen(self)
+        self._upgrade = UpgradeScreen(self)
+        self._gamdl_setup = GamdlSetupScreen(self)
 
-        for screen in (self._welcome, self._pipeline, self._completion, self._undo, self._metadata):
+        for screen in (
+            self._welcome,
+            self._pipeline,
+            self._completion,
+            self._undo,
+            self._metadata,
+            self._upgrade,
+            self._gamdl_setup,
+        ):
             self._stack.addWidget(screen)
         self._stack.setCurrentWidget(self._welcome)
 
@@ -52,8 +70,15 @@ class MainWindow(QMainWindow):
         self._completion.restart_requested.connect(self._go_to_welcome)
         self._completion.undo_requested.connect(self._show_undo)
         self._completion.metadata_requested.connect(self._show_metadata)
+        self._completion.upgrade_requested.connect(self._show_upgrade)
         self._undo.back_requested.connect(self._show_completion)
         self._metadata.back_requested.connect(self._show_completion)
+        self._upgrade.back_requested.connect(self._show_completion)
+        self._upgrade.setup_requested.connect(self._show_gamdl_setup)
+        # Gamdl setup is reached only from the Upgrade screen, so both Back
+        # and Proceed return to Upgrade — which will recompute its own gate.
+        self._gamdl_setup.back_requested.connect(self._show_upgrade)
+        self._gamdl_setup.proceed_requested.connect(self._show_upgrade)
 
     @Slot(object, object, str)
     def _on_start_requested(self, cfg: Config, root: Path, mode: str) -> None:
@@ -114,3 +139,15 @@ class MainWindow(QMainWindow):
             return
         self._stack.setCurrentWidget(self._metadata)
         self._metadata.show_for(self._active_cfg)
+
+    def _show_upgrade(self) -> None:
+        if self._active_cfg is None:
+            return
+        self._stack.setCurrentWidget(self._upgrade)
+        self._upgrade.show_for(self._active_cfg)
+
+    def _show_gamdl_setup(self) -> None:
+        if self._active_cfg is None:
+            return
+        self._stack.setCurrentWidget(self._gamdl_setup)
+        self._gamdl_setup.show_for(self._active_cfg)

@@ -54,6 +54,8 @@ class Config:
     shazam_auto_apply_threshold: float = 0.50
     review_threshold: float = 0.65
     exclude_prefixes: list[str] = field(default_factory=list)
+    gamdl_cookies_path: str = ""
+    gamdl_wvd_path: str = ""
     library_slug: str = ""
     library_root: str = ""
     state_dir: str = ""
@@ -164,6 +166,8 @@ def load_config(
         exclude_prefixes=[
             x.strip() for x in _merge(global_p, lib_p, "defaults", "exclude_prefixes", "").split(",") if x.strip()
         ],
+        gamdl_cookies_path=_merge(global_p, lib_p, "gamdl", "cookies_path", ""),
+        gamdl_wvd_path=_merge(global_p, lib_p, "gamdl", "wvd_path", ""),
         library_slug=slug,
         library_root=str(lib_root),
         state_dir=str(state_dir),

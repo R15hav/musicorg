@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -213,26 +212,10 @@ class CompletionScreen(QWidget):
 
     @Slot(str)
     def _on_metadata(self, _key: str) -> None:
-        QMessageBox.information(
-            self,
-            "Retrieve metadata",
-            "Stage 2 (canonical metadata) is a separate function arriving in "
-            "the next slice. It will run iTunes → JioSaavn → Shazam lookups, "
-            "show a review queue with inline Approve buttons, then rewrite "
-            "tags with its own undo script.",
-        )
         self.metadata_requested.emit()
 
     @Slot(str)
     def _on_upgrade(self, _key: str) -> None:
-        QMessageBox.information(
-            self,
-            "Upgrade to lossless",
-            "Stage 3 (lossless upgrade via gamdl) is a separate function. "
-            "First-time use requires a dedicated setup screen for the "
-            "Apple Music cookies and Widevine device file — that screen "
-            "ships in the v0.5 slice.",
-        )
         self.upgrade_requested.emit()
 
     @Slot(str)
