@@ -20,6 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ._binaries import ffprobe_path
 from .models import ProgressEvent
 
 
@@ -111,7 +112,7 @@ def has_lossless_via_ffprobe(path: Path) -> bool:
     try:
         r = subprocess.run(
             [
-                "ffprobe",
+                ffprobe_path(),
                 "-v", "error",
                 "-print_format", "json",
                 "-show_streams",

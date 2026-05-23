@@ -22,6 +22,9 @@ from .config import (
     ensure_state_dir,
 )
 
+# Runtime binaries -------------------------------------------------------------
+from ._binaries import set_binary_paths
+
 # Models -----------------------------------------------------------------------
 from .models import (
     Track,
@@ -132,6 +135,8 @@ __all__ = [
     "save_library_config",
     "save_global_config",
     "ensure_state_dir",
+    # Runtime binaries
+    "set_binary_paths",
     # Models
     "Track",
     "ResolvedTrack",

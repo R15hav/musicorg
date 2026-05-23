@@ -20,6 +20,7 @@ from mutagen.flac import FLAC
 from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TPE2, TALB, TDRC, TRCK, TCON
 from mutagen.mp4 import MP4
 
+from ._binaries import ffprobe_path, mediainfo_path
 from .models import Track
 
 
@@ -79,7 +80,7 @@ def _from_mutagen(path: Path) -> tuple[dict | None, str, float, int]:
 def _from_ffprobe(path: Path) -> tuple[dict | None, str, float, int]:
     try:
         r = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(path)],
+            [ffprobe_path(), "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(path)],
             capture_output=True, text=True, timeout=30,
         )
         if r.returncode != 0:
@@ -109,7 +110,7 @@ def _from_ffprobe(path: Path) -> tuple[dict | None, str, float, int]:
 def _from_mediainfo(path: Path) -> tuple[dict | None, str, float, int]:
     try:
         r = subprocess.run(
-            ["mediainfo", "--Output=JSON", str(path)],
+            [mediainfo_path(), "--Output=JSON", str(path)],
             capture_output=True, text=True, timeout=30,
         )
         if r.returncode != 0:

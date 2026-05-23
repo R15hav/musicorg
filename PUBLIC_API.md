@@ -22,6 +22,12 @@ Current version: `0.2.0` (pre-v1.0; API stabilization in progress).
 | `save_global_config(updates, path=None) -> None` | function | Write or update the global `config.ini`. Uses XDG default path when `path` is None. |
 | `ensure_state_dir(cfg) -> Path` | function | Create `state/`, `backups/`, and `logs/` under the library state directory. Idempotent. |
 
+### Runtime binaries
+
+| Name | Kind | Summary |
+|---|---|---|
+| `set_binary_paths(*, ffprobe=None, mediainfo=None, ffmpeg=None) -> None` | function | Override the paths the library uses to invoke `ffprobe`, `mediainfo`, and `ffmpeg`. Each argument may be a bare command name (relies on `PATH`) or an absolute path; `None` leaves a binary unchanged. Process-global; call once at startup. Environment variables `MUSICORG_FFPROBE`, `MUSICORG_MEDIAINFO`, `MUSICORG_FFMPEG` provide import-time defaults. |
+
 ### Models
 
 | Name | Kind | Summary |

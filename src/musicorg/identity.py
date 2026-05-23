@@ -12,6 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import Literal
 
+from ._binaries import ffmpeg_path, ffprobe_path
+
 
 _CHUNK = 1 << 20  # 1 MiB — balances syscall overhead with peak RSS for large FLACs.
 
@@ -40,7 +42,7 @@ def duration_ms(path: Path) -> int:
     try:
         proc = subprocess.run(
             [
-                "ffprobe",
+                ffprobe_path(),
                 "-v",
                 "error",
                 "-show_entries",
@@ -78,7 +80,7 @@ def audio_stream_sha256(path: Path) -> str:
     try:
         proc = subprocess.Popen(
             [
-                "ffmpeg",
+                ffmpeg_path(),
                 "-i",
                 str(path),
                 "-map",
