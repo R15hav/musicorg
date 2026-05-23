@@ -52,6 +52,7 @@ cli = [
 ]
 web = []
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+docs = ["mkdocs-material>=9", "pymdown-extensions>=10"]
 
 # Local-only group for building the desktop GUI from source. Intentionally
 # NOT exposed as a public `[gui]` extra — the GUI is distributed exclusively

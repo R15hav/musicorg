@@ -161,7 +161,6 @@ def scan_cmd(
 
 @app.command("dedupe")
 def dedupe_cmd(
-    threshold: float = typer.Option(0.95, "--threshold"),
     interactive: bool = typer.Option(False, "--interactive", help="Launch the two-pane dup-review TUI."),
 ) -> None:
     """Group duplicates and pick winners. Writes 07_winners.csv, 07_duplicates.csv, 07_groups.csv."""
@@ -320,7 +319,7 @@ def canonicalize_cmd(
     skip_tier: Optional[str] = typer.Option(None, "--skip-tier"),
     only_decisions: Optional[str] = typer.Option(None, "--only-decisions"),
 ) -> None:
-    """Run tiered API lookups. Writes 13_itunes.csv, 15_jiosaavn.csv, 16_shazam.csv, 16_merged.csv."""
+    """Run tiered API lookups. Writes 16_merged.csv (one row per file, all tier results merged)."""
     cfg = _cfg()
     state = cfg.state_path
 
