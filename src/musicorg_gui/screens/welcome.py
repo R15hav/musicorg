@@ -1,9 +1,8 @@
 """Welcome screen — choose a music folder and run a scan.
 
-The MVP's smallest possible end-to-end path: pick a folder, watch the
-translated status line update from ``ProgressEvent``, see the resulting
-``Track`` count. Proves the Qt + QThread + library wiring before any of
-the real Stage 1 → Stage 3 flows are built on top.
+First step of the wizard: pick a folder, watch the translated status
+line update from ``ProgressEvent``, see the resulting ``Track`` count,
+then proceed to the Dashboard via the Continue button.
 """
 
 from __future__ import annotations
@@ -11,9 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
@@ -28,9 +28,14 @@ from ..workers import ScanWorker
 
 
 class WelcomeScreen(QWidget):
+    """Pick a music folder, run a scan, hand the loaded library to MainWindow."""
+
+    library_ready = Signal(object)  # carries the Config of the just-scanned library
+
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self._worker: ScanWorker | None = None
+        self._cfg: Config | None = None
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -42,8 +47,7 @@ class WelcomeScreen(QWidget):
 
         subtitle = QLabel(
             "Pick a music folder to scan. The status line below translates each "
-            "library event into plain English. Switch to log view from the menu "
-            "for the raw stream."
+            "library event into plain English."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: palette(mid);")
@@ -69,6 +73,25 @@ class WelcomeScreen(QWidget):
 
         layout.addStretch(1)
 
+        # Continue → row, hidden until a scan completes successfully.
+        nav_row = QHBoxLayout()
+        nav_row.addStretch(1)
+        self._continue_btn = QPushButton("Continue →")
+        self._continue_btn.setVisible(False)
+        self._continue_btn.setMinimumWidth(140)
+        self._continue_btn.clicked.connect(self._on_continue)
+        nav_row.addWidget(self._continue_btn)
+        layout.addLayout(nav_row)
+
+    def reset(self) -> None:
+        """Clear state and show the choose-folder UI again."""
+        self._cfg = None
+        self._choose_btn.setEnabled(True)
+        self._progress.setVisible(False)
+        self._status.clear()
+        self._result.clear()
+        self._continue_btn.setVisible(False)
+
     @Slot()
     def _on_choose(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select music folder")
@@ -77,15 +100,16 @@ class WelcomeScreen(QWidget):
         self._start_scan(Path(folder))
 
     def _start_scan(self, root: Path) -> None:
-        cfg = load_config(root=root, state_root=state_root())
-        ensure_state_dir(cfg)
+        self._cfg = load_config(root=root, state_root=state_root())
+        ensure_state_dir(self._cfg)
         self._choose_btn.setEnabled(False)
+        self._continue_btn.setVisible(False)
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)
         self._status.setText(f"Starting scan in {root}…")
         self._result.clear()
 
-        self._worker = ScanWorker(cfg, root, parent=self)
+        self._worker = ScanWorker(self._cfg, root, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_with_result.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
@@ -93,8 +117,6 @@ class WelcomeScreen(QWidget):
 
     @Slot(object)
     def _on_progress(self, event: ProgressEvent) -> None:
-        # Phase-aware translation. This is the seed of the translated
-        # status panel — full mapping table will live in widgets/status_panel.
         if event.total > 0:
             self._progress.setRange(0, event.total)
             self._progress.setValue(event.current)
@@ -116,9 +138,17 @@ class WelcomeScreen(QWidget):
             f"Scanned {len(tracks)} file{'s' if len(tracks) != 1 else ''} — "
             f"{primary} with primary fingerprints."
         )
+        if self._cfg is not None:
+            self._continue_btn.setVisible(True)
+            self._continue_btn.setFocus()
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
         self._choose_btn.setEnabled(True)
         self._progress.setVisible(False)
         self._status.setText(f"Scan failed: {message}")
+
+    @Slot()
+    def _on_continue(self) -> None:
+        if self._cfg is not None:
+            self.library_ready.emit(self._cfg)
