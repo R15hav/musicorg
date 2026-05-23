@@ -17,6 +17,8 @@ from PySide6.QtWidgets import QMainWindow, QStackedWidget
 
 from musicorg import Config
 
+from .library_index import KnownLibrary
+from .platform import state_root
 from .screens import CompletionScreen, PipelineScreen, UndoScreen, WelcomeScreen
 from .workers import ApplyMode
 
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentWidget(self._welcome)
 
         self._welcome.start_requested.connect(self._on_start_requested)
+        self._welcome.open_existing.connect(self._on_open_existing)
         self._pipeline.completed.connect(self._on_pipeline_completed)
         self._pipeline.cancelled.connect(self._go_to_welcome)
         self._pipeline.failed_out.connect(lambda _msg: None)  # handled inside pipeline; nav stays
@@ -55,6 +58,29 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"musicorg — {cfg.library_slug}")
         self._stack.setCurrentWidget(self._pipeline)
         self._pipeline.start(cfg, root, mode)  # type: ignore[arg-type]
+
+    @Slot(object)
+    def _on_open_existing(self, library: KnownLibrary) -> None:
+        """Open a known library from the Welcome recent-list.
+
+        Organized libraries (an undo_*.sh exists) jump straight to
+        Completion with its existing summary. Partial libraries
+        re-enter the Pipeline with their previously-chosen mode + country.
+        """
+        from musicorg import load_config
+
+        cfg = load_config(library=library.slug, root=library.root, state_root=state_root())
+        cfg.default_country = library.default_country  # type: ignore[assignment]
+        cfg.apply_mode = library.apply_mode  # type: ignore[assignment]
+        self._active_cfg = cfg
+        self.setWindowTitle(f"musicorg — {cfg.library_slug}")
+
+        if library.organized:
+            self._completion.show_existing(cfg)
+            self._stack.setCurrentWidget(self._completion)
+        else:
+            self._stack.setCurrentWidget(self._pipeline)
+            self._pipeline.start(cfg, library.root, library.apply_mode)  # type: ignore[arg-type]
 
     @Slot(object)
     def _on_pipeline_completed(self, stats: dict) -> None:

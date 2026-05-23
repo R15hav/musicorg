@@ -166,6 +166,7 @@ class CompletionScreen(QWidget):
         if errors:
             bits.append(f"{errors} errors")
 
+        self._title.setText("Library organized")
         self._summary.setText(
             "  ·  ".join(bits)
             + f"   into {Path(cfg.library_root) / 'Music'}"
@@ -174,6 +175,39 @@ class CompletionScreen(QWidget):
         undo = execute_stats.get("undo_script")
         if undo:
             self._undo_caption.setText(f"Undo script written: {undo}")
+        else:
+            self._undo_caption.setText("")
+
+    def show_existing(self, cfg: Config) -> None:
+        """Land on Completion for a library opened from the recent list.
+
+        Uses on-disk state for the summary — no fresh stats to render.
+        """
+        self._cfg = cfg
+        state_dir = Path(cfg.state_dir)
+        tags_csv = state_dir / "01_tags.csv"
+        track_count = 0
+        if tags_csv.exists():
+            try:
+                with tags_csv.open() as fh:
+                    track_count = max(sum(1 for _ in fh) - 1, 0)
+            except OSError:
+                track_count = 0
+
+        undo_scripts = sorted(state_dir.glob("undo_*.sh"))
+
+        self._title.setText(f"Library — {cfg.library_slug}")
+        bits = []
+        if track_count:
+            bits.append(f"{track_count} track{'s' if track_count != 1 else ''} scanned")
+        if undo_scripts:
+            bits.append(f"{len(undo_scripts)} prior organize run{'s' if len(undo_scripts) != 1 else ''}")
+        self._summary.setText(
+            "  ·  ".join(bits) + f"   at {cfg.library_root}"
+            if bits else f"Opened library at {cfg.library_root}"
+        )
+        if undo_scripts:
+            self._undo_caption.setText(f"Most recent undo: {undo_scripts[-1].name}")
         else:
             self._undo_caption.setText("")
 
