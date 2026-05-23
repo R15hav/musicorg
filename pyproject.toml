@@ -37,11 +37,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage      = "https://github.com/r15hav/musicorg"
-Repository    = "https://github.com/r15hav/musicorg"
-Documentation = "https://github.com/r15hav/musicorg/blob/main/PUBLIC_API.md"
-Issues        = "https://github.com/r15hav/musicorg/issues"
-Changelog     = "https://github.com/r15hav/musicorg/releases"
+Homepage      = "https://github.com/R15hav/musicorg"
+Repository    = "https://github.com/R15hav/musicorg"
+Documentation = "https://github.com/R15hav/musicorg/blob/main/PUBLIC_API.md"
+Issues        = "https://github.com/R15hav/musicorg/issues"
+Changelog     = "https://github.com/R15hav/musicorg/releases"
 
 [project.optional-dependencies]
 shazam = ["shazamio>=0.7"]

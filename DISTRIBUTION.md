@@ -45,9 +45,9 @@ uv tool install 'musicorg[cli]'   # modern equivalent
 
 **Install path users get:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/r15hav/musicorg/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/R15hav/musicorg/main/install.sh | bash
 # or to install without auto-launch:
-curl -fsSL https://raw.githubusercontent.com/r15hav/musicorg/main/install.sh | bash -s -- --no-run
+curl -fsSL https://raw.githubusercontent.com/R15hav/musicorg/main/install.sh | bash -s -- --no-run
 ```
 
 **Trade-offs.** The `curl | sh` pattern is controversial (security purists hate it) but the de-facto standard for cross-distro CLI tools (rustup, deno, uv, ollama). The script is human-readable; users who care can `curl ... | less` first.
@@ -64,7 +64,7 @@ Set up a tap repo (`r15hav/homebrew-musicorg`) with a single formula. Handles `f
 
 **Install path:**
 ```bash
-brew tap r15hav/musicorg
+brew tap R15hav/musicorg
 brew install musicorg
 ```
 

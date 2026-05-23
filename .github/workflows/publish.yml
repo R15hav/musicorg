@@ -5,7 +5,7 @@ name: publish
 #
 # Required one-time setup on PyPI (see DISTRIBUTION.md):
 #   PyPI       → Manage Project → Publishing → add a "pending" publisher
-#                  Owner: r15hav   Repository: musicorg
+#                  Owner: R15hav   Repository: musicorg
 #                  Workflow: publish.yml   Environment: pypi
 #   TestPyPI   → same dance, environment: testpypi
 #
