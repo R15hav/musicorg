@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 
 from musicorg import Config, ProgressEvent
 
+from ..widgets import StatusPanel
 from ..workers import (
     ApplyMode,
     DedupeOutcome,
@@ -116,16 +117,8 @@ class _RunningPane(QWidget):
         self.headline.setStyleSheet("font-size: 16px; font-weight: 600;")
         layout.addWidget(self.headline)
 
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
-        self.status.setStyleSheet("color: palette(mid);")
-        layout.addWidget(self.status)
-
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 0)
-        layout.addWidget(self.progress)
-
-        layout.addStretch(1)
+        self.status = StatusPanel()
+        layout.addWidget(self.status, 1)
 
 
 class _PreviewPane(QWidget):
@@ -316,6 +309,7 @@ class PipelineScreen(QWidget):
         self._title.setText(f"Organize library — {cfg.library_slug}")
         for key, _ in _PHASES:
             self._strip.set_status(key, "pending")
+        self._running_pane.status.reset()
         self._show_running_pane()
         self._run_scan()
 
@@ -340,16 +334,7 @@ class PipelineScreen(QWidget):
 
     @Slot(object)
     def _on_progress(self, event: ProgressEvent) -> None:
-        if event.total > 0:
-            self._running_pane.progress.setRange(0, event.total)
-            self._running_pane.progress.setValue(event.current)
-        else:
-            self._running_pane.progress.setRange(0, 0)
-        if event.message:
-            self._running_pane.status.setText(event.message)
-        elif event.path:
-            tail = Path(event.path).name
-            self._running_pane.status.setText(f"{event.phase}  {event.current}/{event.total}  {tail}")
+        self._running_pane.status.push(event)
 
     @Slot(str)
     def _on_worker_failed(self, message: str) -> None:
@@ -366,7 +351,6 @@ class PipelineScreen(QWidget):
         assert self._cfg and self._root is not None
         self._strip.set_status("scan", "running")
         self._running_pane.headline.setText("Scanning your music folder…")
-        self._running_pane.status.setText("")
         self._attach(ScanWorker(self._cfg, self._root, parent=self), self._on_scan_done)
 
     @Slot(object)
@@ -378,7 +362,6 @@ class PipelineScreen(QWidget):
         assert self._cfg
         self._strip.set_status("dedupe", "running")
         self._running_pane.headline.setText("Finding duplicate audio files…")
-        self._running_pane.status.setText("")
         self._attach(DedupeWorker(self._cfg, parent=self), self._on_dedupe_done)
 
     @Slot(object)
@@ -390,7 +373,6 @@ class PipelineScreen(QWidget):
         assert self._cfg
         self._strip.set_status("resolve", "running")
         self._running_pane.headline.setText("Reconciling tags, folders, and filenames…")
-        self._running_pane.status.setText("")
         self._attach(ResolveWorker(self._cfg, parent=self), self._on_resolve_done)
 
     @Slot(object)
@@ -402,7 +384,6 @@ class PipelineScreen(QWidget):
         assert self._cfg
         self._strip.set_status("plan", "running")
         self._running_pane.headline.setText("Planning the destination tree…")
-        self._running_pane.status.setText("")
         self._attach(PlanWorker(self._cfg, parent=self), self._on_plan_done)
 
     @Slot(object)
@@ -432,7 +413,6 @@ class PipelineScreen(QWidget):
         assert self._cfg
         self._strip.set_status("execute", "running")
         self._running_pane.headline.setText("Applying the plan…")
-        self._running_pane.status.setText("")
         self._attach(ExecuteWorker(self._cfg, self._mode, parent=self), self._on_execute_done)
 
     @Slot(object)

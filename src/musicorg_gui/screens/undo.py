@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from musicorg import Config, ProgressEvent
 
+from ..widgets import StatusPanel
 from ..workers import UndoWorker
 
 
@@ -212,16 +213,14 @@ class _UndoRunningPane(QWidget):
         self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
         layout.addWidget(self._title)
 
-        self._status = QLabel("")
-        self._status.setWordWrap(True)
-        self._status.setStyleSheet("color: palette(mid);")
-        layout.addWidget(self._status)
+        self._summary = QLabel("")
+        self._summary.setWordWrap(True)
+        self._summary.setStyleSheet("color: palette(mid);")
+        self._summary.setVisible(False)
+        layout.addWidget(self._summary)
 
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 0)
-        layout.addWidget(self._progress)
-
-        layout.addStretch(1)
+        self.status = StatusPanel()
+        layout.addWidget(self.status, 1)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
@@ -233,31 +232,38 @@ class _UndoRunningPane(QWidget):
 
     def start(self, entry: _UndoEntry) -> None:
         self._title.setText(f"Running undo — {entry.display_time}")
-        self._status.setText(f"Starting {entry.path.name}…")
-        self._progress.setRange(0, 0)
-        self._progress.setVisible(True)
+        self._summary.setVisible(False)
+        self.status.reset()
+        self.status.push(ProgressEvent(
+            phase="undo", current=0, total=0, path=str(entry.path),
+            message=f"Starting {entry.path.name}…",
+        ))
         self._done_btn.setVisible(False)
 
-    def update_status(self, event: ProgressEvent) -> None:
-        if event.message:
-            self._status.setText(event.message)
-
     def finish(self, rc: int) -> None:
-        self._progress.setVisible(False)
+        self.status.set_progress_visible(False)
         if rc == 0:
             self._title.setText("Undo complete")
-            self._status.setText(
+            self._summary.setText(
                 "Files were moved back to their original locations. The undo "
                 "script ran without errors."
             )
         else:
             self._title.setText("Undo finished with errors")
-            self._status.setText(
+            self._summary.setText(
                 f"The undo script returned exit code {rc}. Some files may not "
-                "have been reverted. Check the script output."
+                "have been reverted. Check the log view above for details."
             )
+        self._summary.setVisible(True)
         self._done_btn.setVisible(True)
         self._done_btn.setFocus()
+
+    def set_failure_message(self, message: str) -> None:
+        self.status.set_progress_visible(False)
+        self._title.setText("Undo failed to start")
+        self._summary.setText(message)
+        self._summary.setVisible(True)
+        self._done_btn.setVisible(True)
 
 
 class UndoScreen(QWidget):
@@ -309,7 +315,7 @@ class UndoScreen(QWidget):
         self._list_pane.set_running(entry)
 
         self._worker = UndoWorker(entry.path, parent=self)
-        self._worker.progress.connect(self._running_pane.update_status)
+        self._worker.progress.connect(self._running_pane.status.push)
         self._worker.finished_with_result.connect(self._on_undo_done)
         self._worker.failed.connect(self._on_undo_failed)
         self._worker.start()
@@ -321,8 +327,7 @@ class UndoScreen(QWidget):
 
     @Slot(str)
     def _on_undo_failed(self, message: str) -> None:
-        self._running_pane.finish(1)
-        self._running_pane._status.setText(f"Undo failed: {message}")
+        self._running_pane.set_failure_message(message)
         self._list_pane.set_running(None)
 
     @Slot()
