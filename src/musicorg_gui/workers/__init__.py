@@ -6,6 +6,7 @@ from .execute_worker import ApplyMode, ExecuteWorker
 from .plan_worker import PlanWorker
 from .resolve_worker import ResolveWorker
 from .scan_worker import ScanWorker
+from .undo_worker import UndoWorker
 
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "PlanWorker",
     "ResolveWorker",
     "ScanWorker",
+    "UndoWorker",
 ]

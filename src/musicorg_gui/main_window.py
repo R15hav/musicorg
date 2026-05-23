@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QMainWindow, QStackedWidget
 
 from musicorg import Config
 
-from .screens import CompletionScreen, PipelineScreen, WelcomeScreen
+from .screens import CompletionScreen, PipelineScreen, UndoScreen, WelcomeScreen
 from .workers import ApplyMode
 
 
@@ -35,8 +35,9 @@ class MainWindow(QMainWindow):
         self._welcome = WelcomeScreen(self)
         self._pipeline = PipelineScreen(self)
         self._completion = CompletionScreen(self)
+        self._undo = UndoScreen(self)
 
-        for screen in (self._welcome, self._pipeline, self._completion):
+        for screen in (self._welcome, self._pipeline, self._completion, self._undo):
             self._stack.addWidget(screen)
         self._stack.setCurrentWidget(self._welcome)
 
@@ -45,6 +46,8 @@ class MainWindow(QMainWindow):
         self._pipeline.cancelled.connect(self._go_to_welcome)
         self._pipeline.failed_out.connect(lambda _msg: None)  # handled inside pipeline; nav stays
         self._completion.restart_requested.connect(self._go_to_welcome)
+        self._completion.undo_requested.connect(self._show_undo)
+        self._undo.back_requested.connect(self._show_completion)
 
     @Slot(object, object, str)
     def _on_start_requested(self, cfg: Config, root: Path, mode: str) -> None:
@@ -65,3 +68,14 @@ class MainWindow(QMainWindow):
         self._welcome.reset()
         self._stack.setCurrentWidget(self._welcome)
         self._active_cfg = None
+
+    def _show_undo(self) -> None:
+        if self._active_cfg is None:
+            return
+        self._undo.show_for(self._active_cfg)
+        self._stack.setCurrentWidget(self._undo)
+
+    def _show_completion(self) -> None:
+        # Reached only after viewing undo history; the Completion screen
+        # is already populated from the prior pipeline run.
+        self._stack.setCurrentWidget(self._completion)

@@ -203,13 +203,6 @@ class CompletionScreen(QWidget):
 
     @Slot(str)
     def _on_undo(self, _key: str) -> None:
-        QMessageBox.information(
-            self,
-            "Undo history",
-            "The undo browser is in the upcoming slice. For now, the undo "
-            "script written by this run can be executed directly from the "
-            "library state directory.",
-        )
         self.undo_requested.emit()
 
     @Slot(str)
