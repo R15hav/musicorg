@@ -1,154 +1,177 @@
-"""Welcome screen — choose a music folder and run a scan.
+"""Welcome screen — configure the organize run before kicking off Stage 1.
 
-First step of the wizard: pick a folder, watch the translated status
-line update from ``ProgressEvent``, see the resulting ``Track`` count,
-then proceed to the Dashboard via the Continue button.
+The user picks: music folder, apply mode (move / copy / symlink), and
+default country routing. Clicking **Start →** emits
+``start_requested(cfg, root, mode)`` and the MainWindow transitions to
+the PipelineScreen which auto-runs the rest of Stage 1.
+
+Symlink mode is hidden on Windows by default — see
+``platform.symlink_supported``.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QComboBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
-    QProgressBar,
+    QLineEdit,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
 
-from musicorg import Config, ProgressEvent, Track, ensure_state_dir, load_config
+from musicorg import Config, ensure_state_dir, load_config
 
-from ..platform import state_root
-from ..workers import ScanWorker
+from ..platform import state_root, symlink_supported
+from ..workers import ApplyMode
+
+
+_COUNTRIES = [
+    ("bollywood", "Bollywood"),
+    ("hollywood", "Hollywood"),
+    ("unknown", "Unknown"),
+]
 
 
 class WelcomeScreen(QWidget):
-    """Pick a music folder, run a scan, hand the loaded library to MainWindow."""
+    """Collect organize-run config; emit start_requested when user clicks Start."""
 
-    library_ready = Signal(object)  # carries the Config of the just-scanned library
+    start_requested = Signal(object, object, str)  # (Config, Path root, mode)
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
-        self._worker: ScanWorker | None = None
-        self._cfg: Config | None = None
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(32, 32, 32, 32)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(48, 40, 48, 40)
+        outer.setSpacing(18)
 
         title = QLabel("musicorg")
         title.setStyleSheet("font-size: 28px; font-weight: 600;")
-        layout.addWidget(title)
+        outer.addWidget(title)
 
         subtitle = QLabel(
-            "Pick a music folder to scan. The status line below translates each "
-            "library event into plain English."
+            "Pick a music folder and how to apply the organize plan. "
+            "Stage 1 will scan, deduplicate, plan a tidy tree, then pause once "
+            "for you to approve the move plan before any file is touched."
         )
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: palette(mid);")
-        layout.addWidget(subtitle)
+        outer.addWidget(subtitle)
 
-        self._choose_btn = QPushButton("Choose music folder…")
-        self._choose_btn.clicked.connect(self._on_choose)
-        layout.addWidget(self._choose_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        # Folder picker -------------------------------------------------------
+        folder_label = QLabel("Music folder")
+        folder_label.setStyleSheet("font-weight: 600; margin-top: 8px;")
+        outer.addWidget(folder_label)
 
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 0)
-        self._progress.setVisible(False)
-        layout.addWidget(self._progress)
+        folder_row = QHBoxLayout()
+        folder_row.setSpacing(8)
+        self._folder_edit = QLineEdit()
+        self._folder_edit.setPlaceholderText("/path/to/your/music")
+        self._folder_edit.textChanged.connect(self._update_start_state)
+        folder_row.addWidget(self._folder_edit, 1)
 
-        self._status = QLabel("")
-        self._status.setWordWrap(True)
-        layout.addWidget(self._status)
+        browse_btn = QPushButton("Browse…")
+        browse_btn.clicked.connect(self._on_browse)
+        folder_row.addWidget(browse_btn)
+        outer.addLayout(folder_row)
 
-        self._result = QLabel("")
-        self._result.setWordWrap(True)
-        self._result.setStyleSheet("font-weight: 600;")
-        layout.addWidget(self._result)
+        # Settings form -------------------------------------------------------
+        form_label = QLabel("Settings")
+        form_label.setStyleSheet("font-weight: 600; margin-top: 16px;")
+        outer.addWidget(form_label)
 
-        layout.addStretch(1)
+        form = QFormLayout()
+        form.setContentsMargins(0, 4, 0, 0)
+        form.setHorizontalSpacing(20)
+        form.setVerticalSpacing(8)
 
-        # Continue → row, hidden until a scan completes successfully.
-        nav_row = QHBoxLayout()
-        nav_row.addStretch(1)
-        self._continue_btn = QPushButton("Continue →")
-        self._continue_btn.setVisible(False)
-        self._continue_btn.setMinimumWidth(140)
-        self._continue_btn.clicked.connect(self._on_continue)
-        nav_row.addWidget(self._continue_btn)
-        layout.addLayout(nav_row)
+        # Apply mode (radio row)
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(20)
+        self._mode_group = QButtonGroup(self)
+        for value, label in self._available_modes():
+            rb = QRadioButton(label)
+            rb.setProperty("value", value)
+            self._mode_group.addButton(rb)
+            mode_row.addWidget(rb)
+            if value == "move":
+                rb.setChecked(True)
+        mode_row.addStretch(1)
+        mode_box = QWidget()
+        mode_box.setLayout(mode_row)
+        form.addRow("Apply mode:", mode_box)
+
+        # Default country dropdown
+        self._country_combo = QComboBox()
+        for value, label in _COUNTRIES:
+            self._country_combo.addItem(label, userData=value)
+        form.addRow("Default country:", self._country_combo)
+
+        outer.addLayout(form)
+
+        outer.addStretch(1)
+
+        # Start row -----------------------------------------------------------
+        start_row = QHBoxLayout()
+        start_row.addStretch(1)
+        self._start_btn = QPushButton("Start →")
+        self._start_btn.setMinimumWidth(160)
+        self._start_btn.setStyleSheet("padding: 8px 16px; font-weight: 600;")
+        self._start_btn.setEnabled(False)
+        self._start_btn.clicked.connect(self._on_start)
+        start_row.addWidget(self._start_btn)
+        outer.addLayout(start_row)
+
+    @staticmethod
+    def _available_modes() -> list[tuple[str, str]]:
+        modes = [("move", "Move"), ("copy", "Copy")]
+        if sys.platform != "win32" or symlink_supported():
+            modes.append(("symlink", "Symlink"))
+        return modes
 
     def reset(self) -> None:
-        """Clear state and show the choose-folder UI again."""
-        self._cfg = None
-        self._choose_btn.setEnabled(True)
-        self._progress.setVisible(False)
-        self._status.clear()
-        self._result.clear()
-        self._continue_btn.setVisible(False)
+        self._folder_edit.clear()
+        for btn in self._mode_group.buttons():
+            if btn.property("value") == "move":
+                btn.setChecked(True)
+                break
+        self._country_combo.setCurrentIndex(0)
+        self._update_start_state()
+
+    def _update_start_state(self) -> None:
+        folder = self._folder_edit.text().strip()
+        self._start_btn.setEnabled(bool(folder) and Path(folder).is_dir())
 
     @Slot()
-    def _on_choose(self) -> None:
+    def _on_browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select music folder")
-        if not folder:
-            return
-        self._start_scan(Path(folder))
+        if folder:
+            self._folder_edit.setText(folder)
 
-    def _start_scan(self, root: Path) -> None:
-        self._cfg = load_config(root=root, state_root=state_root())
-        ensure_state_dir(self._cfg)
-        self._choose_btn.setEnabled(False)
-        self._continue_btn.setVisible(False)
-        self._progress.setVisible(True)
-        self._progress.setRange(0, 0)
-        self._status.setText(f"Starting scan in {root}…")
-        self._result.clear()
-
-        self._worker = ScanWorker(self._cfg, root, parent=self)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.finished_with_result.connect(self._on_finished)
-        self._worker.failed.connect(self._on_failed)
-        self._worker.start()
-
-    @Slot(object)
-    def _on_progress(self, event: ProgressEvent) -> None:
-        if event.total > 0:
-            self._progress.setRange(0, event.total)
-            self._progress.setValue(event.current)
-        tail = Path(event.path).name if event.path else ""
-        if event.error:
-            self._status.setText(f"Trouble reading {tail} — file unchanged")
-        elif event.phase == "scan":
-            self._status.setText(f"Reading tags — {event.current}/{event.total} — {tail}")
-        else:
-            self._status.setText(event.message or f"{event.phase}  {event.current}/{event.total}")
-
-    @Slot(object)
-    def _on_finished(self, tracks: list[Track]) -> None:
-        self._choose_btn.setEnabled(True)
-        self._progress.setVisible(False)
-        self._status.setText("Scan complete.")
-        primary = sum(1 for t in tracks if t.fingerprint_sha256 and not t.fingerprint_sha256.startswith("fallback_"))
-        self._result.setText(
-            f"Scanned {len(tracks)} file{'s' if len(tracks) != 1 else ''} — "
-            f"{primary} with primary fingerprints."
-        )
-        if self._cfg is not None:
-            self._continue_btn.setVisible(True)
-            self._continue_btn.setFocus()
-
-    @Slot(str)
-    def _on_failed(self, message: str) -> None:
-        self._choose_btn.setEnabled(True)
-        self._progress.setVisible(False)
-        self._status.setText(f"Scan failed: {message}")
+    def _selected_mode(self) -> ApplyMode:
+        for btn in self._mode_group.buttons():
+            if btn.isChecked():
+                return btn.property("value")  # type: ignore[no-any-return]
+        return "move"
 
     @Slot()
-    def _on_continue(self) -> None:
-        if self._cfg is not None:
-            self.library_ready.emit(self._cfg)
+    def _on_start(self) -> None:
+        root = Path(self._folder_edit.text().strip()).resolve()
+        if not root.is_dir():
+            return
+        country = self._country_combo.currentData() or "bollywood"
+        cfg = load_config(root=root, state_root=state_root())
+        cfg.default_country = country
+        cfg.apply_mode = self._selected_mode()
+        ensure_state_dir(cfg)
+        self.start_requested.emit(cfg, root, self._selected_mode())
