@@ -1,0 +1,86 @@
+name: publish
+
+# Builds wheel + sdist on every push to main (smoke), and on tag push
+# uploads to PyPI/TestPyPI via Trusted Publishing (OIDC — no tokens).
+#
+# Required one-time setup on PyPI (see DISTRIBUTION.md):
+#   PyPI       → Manage Project → Publishing → add a "pending" publisher
+#                  Owner: r15hav   Repository: musicorg
+#                  Workflow: publish.yml   Environment: pypi
+#   TestPyPI   → same dance, environment: testpypi
+#
+# Required one-time setup in GitHub:
+#   Settings → Environments → New environment "pypi" (and "testpypi")
+#   No secrets needed — OIDC handles auth.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish"
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build wheel + sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install build
+        run: python -m pip install --upgrade pip build twine
+      - name: build
+        run: python -m build
+      - name: twine check
+        run: python -m twine check dist/*
+      - name: upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/musicorg
+    permissions:
+      id-token: write          # OIDC for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/musicorg
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1

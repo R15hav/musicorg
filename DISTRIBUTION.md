@@ -45,9 +45,9 @@ uv tool install 'musicorg[cli]'   # modern equivalent
 
 **Install path users get:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<user>/musicorg/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/r15hav/musicorg/main/install.sh | bash
 # or to install without auto-launch:
-curl -fsSL https://raw.githubusercontent.com/<user>/musicorg/main/install.sh | bash -s -- --no-run
+curl -fsSL https://raw.githubusercontent.com/r15hav/musicorg/main/install.sh | bash -s -- --no-run
 ```
 
 **Trade-offs.** The `curl | sh` pattern is controversial (security purists hate it) but the de-facto standard for cross-distro CLI tools (rustup, deno, uv, ollama). The script is human-readable; users who care can `curl ... | less` first.
@@ -60,18 +60,18 @@ curl -fsSL https://raw.githubusercontent.com/<user>/musicorg/main/install.sh | b
 
 ### 1.3 Homebrew tap (Linux + future macOS)
 
-Set up a tap repo (`<user>/homebrew-musicorg`) with a single formula. Handles `ffmpeg` + `mediainfo` automatically as Homebrew deps; cross-platform if/when macOS support is added.
+Set up a tap repo (`r15hav/homebrew-musicorg`) with a single formula. Handles `ffmpeg` + `mediainfo` automatically as Homebrew deps; cross-platform if/when macOS support is added.
 
 **Install path:**
 ```bash
-brew tap <user>/musicorg
+brew tap r15hav/musicorg
 brew install musicorg
 ```
 
 **Trade-offs.** Adds a separate repo to maintain. Formula is ~30 lines and updates on each release via the same CI tag-push trigger.
 
 **Action items:**
-- [ ] Create `<user>/homebrew-musicorg` tap repo with `Formula/musicorg.rb`.
+- [ ] Create `r15hav/homebrew-musicorg` tap repo with `Formula/musicorg.rb`.
 - [ ] CI workflow that bumps the formula's `url` + `sha256` on tag push (use `brew bump-formula-pr` or write a tiny script).
 
 ## Tier 2 — after v1.0 stabilises (broader reach, more maintenance)

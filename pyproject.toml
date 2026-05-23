@@ -10,10 +10,38 @@ requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Music Upgrader"}]
+keywords = ["music", "library", "organizer", "tags", "id3", "metadata", "alac", "lossless", "shazam", "itunes", "jiosaavn", "cli", "tui"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Filesystems",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
 dependencies = [
     "mutagen>=1.47",
     "requests>=2.31",
 ]
+
+[project.urls]
+Homepage      = "https://github.com/r15hav/musicorg"
+Repository    = "https://github.com/r15hav/musicorg"
+Documentation = "https://github.com/r15hav/musicorg/blob/main/PUBLIC_API.md"
+Issues        = "https://github.com/r15hav/musicorg/issues"
+Changelog     = "https://github.com/r15hav/musicorg/releases"
 
 [project.optional-dependencies]
 shazam = ["shazamio>=0.7"]
