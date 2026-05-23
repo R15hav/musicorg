@@ -23,8 +23,10 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
-from .. import approval, backup, canonicalize, dedupe, executor, planner, refingerprint, resolve, scan, upgrade
-from ..config import (
+from musicorg import approval, backup, canonicalize, dedupe, executor, planner, refingerprint, resolve, upgrade
+from musicorg.scan import scan, write_tags_csv
+from musicorg.models import ProgressEvent
+from musicorg.config import (
     Config,
     GLOBAL_CONFIG,
     ensure_state_dir,
@@ -33,9 +35,9 @@ from ..config import (
     save_library_config,
     slugify_path,
 )
-from ..lookup.breaker import CircuitBreaker
-from ..tags import AUDIO_EXTS
-from ..tags import read as read_tags
+from musicorg.lookup.breaker import CircuitBreaker
+from musicorg.tags import AUDIO_EXTS
+from musicorg.tags import read as read_tags
 
 
 console = Console()
@@ -89,10 +91,10 @@ def _stage_scan(cfg: Config) -> int:
         console=err,
     ) as bar:
         task = bar.add_task("scanning", total=None)
-        def cb(i: int, total: int, _p: Path) -> None:
-            bar.update(task, total=total, completed=i)
-        tracks = scan.scan(cfg.root_path, cfg, progress=cb)
-    stats = scan.write_tags_csv(tracks, state / "01_tags.csv")
+        def cb(ev: ProgressEvent) -> None:
+            bar.update(task, total=ev.total, completed=ev.current)
+        tracks = scan(cfg, progress=cb)
+    stats = write_tags_csv(tracks, state / "01_tags.csv")
     console.print(
         f"[green]scan[/green]: {stats.total} files "
         f"(mutagen={stats.mutagen_ok}, ffprobe={stats.ffprobe_ok}, "
@@ -167,7 +169,7 @@ def _stage_canonicalize(cfg: Config, tiers: list[str]) -> dict:
         console.print(f"[red]missing {music_root} — run organize stage 1 first[/red]")
         return {}
 
-    from ..lookup import chain  # local import — heavy network deps inside
+    from musicorg.lookup import chain  # local import — heavy network deps inside
 
     files: list[Path] = []
     for p in music_root.rglob("*"):

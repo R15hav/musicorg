@@ -40,8 +40,8 @@ from textual.containers import Vertical, Horizontal
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Footer, Header, Input, ProgressBar, Static
 
-from ... import approval, canonicalize
-from ...models import ApplyResult
+from musicorg import approval, canonicalize
+from musicorg.models import ApplyResult
 
 
 _EDITOR_FALLBACKS: tuple[str, ...] = ("vim", "nano")

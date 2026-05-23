@@ -9,13 +9,15 @@ records which downstream phases (dedupe, resolve, plan) consume.
 from __future__ import annotations
 
 import csv
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Iterable
 
 from . import tags as tags_mod
 from .config import Config, DEFAULT_EXCLUDE_DIR_NAMES, is_path_excluded
-from .models import Track
+from .identity import audio_stream_sha256, identity_quality
+from .models import ProgressEvent, Track
 
 
 SCAN_CSV_COLUMNS: list[str] = [
@@ -53,28 +55,50 @@ def _iter_audio_files(
 
 
 def scan(
-    root: Path,
     cfg: Config,
+    root: Path | None = None,
     extra_excludes: list[Path] | None = None,
-    progress: Callable[[int, int, Path], None] | None = None,
+    progress: Callable[[ProgressEvent], None] | None = None,
+    compute_fingerprint: bool = True,
 ) -> list[Track]:
-    """Walk ``root`` recursively and return one ``Track`` per audio file.
+    """Walk the library and return one ``Track`` per audio file.
 
-    Skips paths under ``cfg.exclude_prefixes``, ``extra_excludes``, and any
-    component listed in :data:`DEFAULT_EXCLUDE_DIR_NAMES`. ``progress`` is
-    invoked as ``progress(index, total, path)`` per file when supplied.
+    Walks ``root`` if supplied else ``cfg.root_path``. Skips paths under
+    ``cfg.exclude_prefixes``, ``extra_excludes``, and any component listed
+    in :data:`DEFAULT_EXCLUDE_DIR_NAMES`. When ``compute_fingerprint`` is
+    True (the default), each Track gets its ``fingerprint_sha256`` and
+    ``identity_quality`` populated via :func:`audio_stream_sha256`. The
+    ``progress`` callback, when supplied, is invoked once per file with
+    ``phase="scan"``; failures populate ``error=True`` and ``message`` but
+    do not abort the walk.
     """
+    walk_root = Path(root) if root is not None else Path(cfg.root_path)
     excludes: list[str] = list(cfg.exclude_prefixes or [])
     if extra_excludes:
         excludes.extend(str(Path(p)) for p in extra_excludes)
-    files = sorted(_iter_audio_files(Path(root), excludes))
+    files = sorted(_iter_audio_files(walk_root, excludes))
     total = len(files)
     tracks: list[Track] = []
     for i, p in enumerate(files, 1):
         t = tags_mod.read(p)
+        if compute_fingerprint:
+            try:
+                fp = audio_stream_sha256(p)
+                t.fingerprint_sha256 = fp
+                t.identity_quality = identity_quality(fp)
+            except Exception as exc:  # noqa: BLE001 — scan must not abort on a single bad file.
+                t.fingerprint_sha256 = ""
+                t.identity_quality = "none"
+                if progress is not None:
+                    progress(ProgressEvent(
+                        phase="scan", current=i, total=total,
+                        path=str(p), message=str(exc), error=True,
+                    ))
+                tracks.append(t)
+                continue
         tracks.append(t)
         if progress is not None:
-            progress(i, total, p)
+            progress(ProgressEvent(phase="scan", current=i, total=total, path=str(p)))
     return tracks
 
 
@@ -89,7 +113,7 @@ def _bucket_source(src: str) -> str:
 
 
 def compute_stats(tracks: list[Track]) -> ScanStats:
-    """Bucket the per-file ``tag_source`` codes into coverage counters."""
+    """Bucket per-file ``tag_source`` codes into a :class:`ScanStats` counter."""
     stats = ScanStats(total=len(tracks))
     for t in tracks:
         has_any = bool(t.title or t.artist or t.album)
@@ -109,7 +133,11 @@ def compute_stats(tracks: list[Track]) -> ScanStats:
 
 
 def write_tags_csv(tracks: list[Track], out_path: Path) -> ScanStats:
-    """Persist ``tracks`` to a CSV row-per-file. Returns the coverage stats."""
+    """Persist ``tracks`` to ``01_tags.csv`` (one row per file).
+
+    Creates parent directories if absent. Returns coverage stats bucketted
+    by tag-read backend (mutagen / ffprobe / mediainfo / none).
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", newline="", encoding="utf-8") as f:

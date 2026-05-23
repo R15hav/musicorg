@@ -47,7 +47,12 @@ RESOLVED_FIELDS: list[str] = [
 
 
 def detect_country(artist: str, album: str, default: str = "bollywood") -> str:
-    """Heuristic country routing. Unknown stays as ``default``."""
+    """Heuristic country routing based on artist/album allowlists.
+
+    Returns ``"hollywood"`` when the artist or album appears in the built-in
+    allowlists, else ``default`` (typically ``"bollywood"`` for this library's
+    corpus). New entries belong in :data:`HOLLYWOOD_ARTISTS` / :data:`HOLLYWOOD_ALBUMS`.
+    """
     a = (artist or "").lower()
     al = (album or "").lower()
     for h in HOLLYWOOD_ARTISTS:
@@ -75,7 +80,13 @@ def category_from_folder(folder_name: str, album: str, year: str) -> str:
 
 
 def reconcile(row: dict, default_country: str = "bollywood") -> dict:
-    """Return the canonical resolved record for one winner CSV row."""
+    """Merge folder, tag, and filename evidence into one canonical record.
+
+    Folder ``Album (YYYY)`` shape takes precedence over tag values. The
+    returned dict is ready for the ``08_resolved.csv`` schema (see
+    :data:`RESOLVED_FIELDS`). ``needs_lookup`` is a ``+``-joined list of
+    missing fields (``year``, ``album``, ``title``, ``artist``).
+    """
     folder = row.get("parent_folder", "") or ""
     folder_album, folder_year = parse_folder(folder)
     tag_artist = strip_junk(row.get("artist", ""))
@@ -132,9 +143,10 @@ def resolve_winners(
     out_path: Path,
     default_country: str = "bollywood",
 ) -> dict:
-    """Reconcile every row of a winners CSV and emit ``08_resolved.csv``.
+    """Reconcile every winner CSV row and write ``08_resolved.csv``.
 
-    Returns ``{"total", "confidence": Counter, "country": Counter, "path"}``.
+    Calls :func:`reconcile` per row. Returns
+    ``{"total", "confidence": Counter, "country": Counter, "path"}``.
     """
     winners_csv_path = Path(winners_csv_path)
     out_path = Path(out_path)

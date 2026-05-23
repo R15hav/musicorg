@@ -19,12 +19,14 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, BarColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
 
-from .. import (
+from musicorg import (
     backup, canonicalize, dedupe, executor, misc, planner, refingerprint,
-    resolve, scan, upgrade, zip_probe, approval,
+    resolve, upgrade, zip_probe, approval,
 )
-from ..config import Config, GLOBAL_CONFIG, STATE_ROOT, ensure_state_dir, load_config, save_global_config, save_library_config
-from ..lookup.breaker import CircuitBreaker
+from musicorg.scan import scan, write_tags_csv
+from musicorg.config import Config, GLOBAL_CONFIG, STATE_ROOT, ensure_state_dir, load_config, save_global_config, save_library_config
+from musicorg.lookup.breaker import CircuitBreaker
+from musicorg.models import ProgressEvent
 
 
 app = typer.Typer(
@@ -136,10 +138,10 @@ def scan_cmd(
         disable=_G.quiet,
     ) as bar:
         task = bar.add_task("scanning", total=None)
-        def on_progress(i: int, total: int, _p: Path) -> None:
-            bar.update(task, total=total, completed=i)
-        tracks = scan.scan(path, cfg, extra_excludes=exclude, progress=on_progress)
-    stats = scan.write_tags_csv(tracks, out)
+        def on_progress(ev: ProgressEvent) -> None:
+            bar.update(task, total=ev.total, completed=ev.current)
+        tracks = scan(cfg, root=path, extra_excludes=exclude, progress=on_progress)
+    stats = write_tags_csv(tracks, out)
     if not tracks:
         err.print("[red]no audio files found[/red]")
         raise typer.Exit(2)
@@ -337,8 +339,8 @@ def canonicalize_cmd(
         err.print(f"[red]no organized music tree at {music_root} (run apply first)[/red]")
         raise typer.Exit(2)
 
-    from ..tags import AUDIO_EXTS, read as read_tags
-    from ..lookup import chain
+    from musicorg.tags import AUDIO_EXTS, read as read_tags
+    from musicorg.lookup import chain
 
     files: list[Path] = []
     for p in music_root.rglob("*"):

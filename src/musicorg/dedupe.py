@@ -40,7 +40,7 @@ def score(row: dict) -> tuple:
 
 
 def read_tags_csv(path: Path) -> list[dict]:
-    """Load the row-per-file CSV produced by :mod:`musicorg.scan`."""
+    """Load the row-per-file tags CSV produced by :func:`musicorg.scan.write_tags_csv`."""
     with Path(path).open("r", encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
 

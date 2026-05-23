@@ -12,11 +12,18 @@ from __future__ import annotations
 import csv
 import datetime
 import json
+import logging
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from .models import ProgressEvent
+
+
+logger = logging.getLogger(__name__)
 
 
 GAMDL_TIMEOUT_SEC = 600
@@ -165,10 +172,23 @@ def run_gamdl(
             text=True,
             timeout=GAMDL_TIMEOUT_SEC,
         )
+        if r.returncode != 0:
+            logger.warning(
+                "gamdl exited %s for %s: %s",
+                r.returncode,
+                apple_music_url,
+                (r.stderr or "")[-300:].strip(),
+            )
         return r.returncode, r.stdout or "", r.stderr or ""
     except subprocess.TimeoutExpired:
+        logger.warning(
+            "gamdl timed out after %ss for %s",
+            GAMDL_TIMEOUT_SEC,
+            apple_music_url,
+        )
         return -1, "", "timeout"
     except FileNotFoundError as e:
+        logger.error("gamdl binary not found on PATH: %s", e)
         return -2, "", f"gamdl-not-found: {e}"
 
 
@@ -271,11 +291,22 @@ def upgrade_one(
         shutil.copy2(str(new_audio), str(target))
         new_audio.unlink(missing_ok=True)
     except Exception as e:
+        logger.warning(
+            "copy of staged ALAC failed for %s: %s: %s",
+            track_path,
+            type(e).__name__,
+            e,
+        )
         # Roll back the quarantine move so we don't lose the original.
         try:
             shutil.move(str(quar), str(track_path))
-        except Exception:
-            pass
+        except Exception as rollback_exc:
+            logger.error(
+                "rollback of quarantine move failed for %s: %s: %s",
+                track_path,
+                type(rollback_exc).__name__,
+                rollback_exc,
+            )
         return {
             "status": "gamdl_failed",
             "detail": f"copy_failed: {type(e).__name__}: {e}",
@@ -358,6 +389,7 @@ def upgrade_batch(
     dry_run: bool = False,
     cookies_path: Path | None = None,
     wvd_path: Path | None = None,
+    progress: Callable[[ProgressEvent], None] | None = None,
 ) -> dict:
     """Run ``upgrade_one`` over a list of candidates and emit logs + undo.
 
@@ -366,7 +398,9 @@ def upgrade_batch(
     ``state_dir/_upgrade_staging/<run_id>`` so gamdl cannot short-circuit on
     a pre-existing output file. Permanent skips land in
     ``state_dir/upgrade_skips.csv``; an undo script for successful upgrades
-    is written to ``state_dir/undo_upgrade_<TS>.py``.
+    is written to ``state_dir/undo_upgrade_<TS>.py``. ``progress`` (if given)
+    is invoked once per candidate with a ``ProgressEvent`` carrying the
+    upgrade outcome in ``message``.
     """
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     run_id = f"run_{ts}"
@@ -387,18 +421,36 @@ def upgrade_batch(
         "dry_run": 0,
     }
     undo_ops: list[dict] = []
+    total = len(candidates)
 
-    for cand in candidates:
+    _OK_STATUSES = {"upgraded", "skipped", "dry_run"}
+
+    def _emit(i: int, p: str, message: str, *, is_error: bool = False) -> None:
+        if progress is None:
+            return
+        progress(ProgressEvent(
+            phase="upgrade",
+            current=i,
+            total=total,
+            path=p,
+            message=message,
+            error=is_error,
+        ))
+
+    for i, cand in enumerate(candidates, start=1):
         raw_url = (cand.get("apple_music_url") or "").strip()
         url = normalize_url(raw_url)
         path = Path(cand.get("path", ""))
         if not url:
             counts["skipped_url_normalize"] += 1
             _write_skip_row(skips_csv, cand, "wrong_match_permanent", "url_normalize_empty")
+            logger.warning("skipped candidate %s: url did not normalize (raw=%r)", path, raw_url)
+            _emit(i, str(path), "skipped_url_normalize", is_error=True)
             continue
 
         if dry_run:
             counts["dry_run"] += 1
+            _emit(i, str(path), "dry_run")
             continue
 
         result = upgrade_one(
@@ -419,16 +471,33 @@ def upgrade_batch(
                 "replaced_path": result["replaced_path"],
             })
             _write_undo_script(undo_path, undo_ops)
+            logger.info("upgraded %s -> %s", path, result["new_path"])
         elif status == "lossy_only_on_apple_music":
             _write_skip_row(skips_csv, cand, "lossy_only_on_apple_music",
                             result.get("staged_path", ""))
+            logger.info("permanent skip (lossy_only_on_apple_music) for %s", path)
         elif status == "no_new_file":
             # Could be transient (gamdl 404) or permanent (region-locked); the
             # rc was already 0, so treat as alac_listed_but_not_servable.
             _write_skip_row(skips_csv, cand, "alac_listed_but_not_servable",
                             "gamdl_rc0_no_staged_file")
-        # gamdl_failed / target_collision / original_missing are not permanent
-        # skips — leave them to the resumable state of the next run.
+            logger.info("permanent skip (alac_listed_but_not_servable) for %s", path)
+        else:
+            # gamdl_failed / target_collision / original_missing are not
+            # permanent skips — leave them to the resumable state of the next run.
+            logger.warning(
+                "non-permanent upgrade failure for %s: status=%s detail=%s",
+                path,
+                status,
+                result.get("detail") or result.get("stderr_tail") or "",
+            )
+
+        _emit(
+            i,
+            str(path),
+            status,
+            is_error=status not in _OK_STATUSES,
+        )
 
     summary: dict[str, Any] = {
         "run_id": run_id,

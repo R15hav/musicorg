@@ -69,7 +69,15 @@ def build_review_csv(
     out_path: Path,
     promote_set: set[str] | None = None,
 ) -> int:
-    """Write the human-review CSV. Returns the row count written."""
+    """Write the human-review CSV from the merged lookup results.
+
+    Filters to ``review``, ``low``, and ``no_match`` decision rows (promoting
+    any paths in ``promote_set`` to ``auto_apply`` first, which removes them
+    from the review queue). Rows are sorted by decision then descending
+    confidence so the most actionable rows appear first.
+
+    Returns the row count written.
+    """
     merged_csv = Path(merged_csv)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,16 +241,14 @@ def batch_rule(
     confidence_min: float = 0.65,
     buckets: list[str] | None = None,
 ) -> int:
-    """Apply a non-interactive priority rule, e.g. ``"jiosaavn>shazam>itunes"``.
+    """Apply a non-interactive tier-priority rule to unresolved rows.
 
-    For each row in the named ``buckets`` (default: ``review``, ``low``,
-    ``no_match``), pick the first tier in the rule whose data is non-empty
-    AND whose tier-specific confidence column is >= ``confidence_min``.
-    Rows where no tier qualifies are skipped (no entry in approvals).
+    ``rule`` is a ``>``-separated tier list, e.g. ``"jiosaavn>shazam>itunes"``.
+    For each candidate row, the first tier whose title is non-empty AND whose
+    confidence is >= ``confidence_min`` is used. Rows where no tier qualifies
+    receive no approval entry (left for manual review).
 
-    Returns the approval count written. The confidence column consulted per
-    tier is ``<tier>_confidence`` when present; otherwise the row-level
-    ``confidence`` (treated as a global score) is used as a fallback.
+    Returns the approval count written.
     """
     merged_csv = Path(merged_csv)
     approvals_out = Path(approvals_out)
@@ -290,7 +296,12 @@ def _pick_tier(row: dict, tiers: list[str], confidence_min: float) -> str:
 
 
 def summarise_buckets(merged_csv: Path, promote_set: set[str] | None = None) -> dict:
-    """Bucket counts for the review queue. Cheap call for CLI/status output."""
+    """Return decision-bucket counts for the review queue.
+
+    Cheap read-only call suitable for CLI status display and daemon progress
+    reporting. Returns a ``{decision: count}`` dict for the ``review``,
+    ``low``, and ``no_match`` rows that remain after applying promotions.
+    """
     rows = _read_merged(merged_csv)
     work = _filter_for_review(rows, promote_set)
     return dict(Counter(r.get("decision", "") for r in work))

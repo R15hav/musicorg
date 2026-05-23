@@ -136,13 +136,12 @@ if [ "$SKIP_SYSTEM" -eq 0 ]; then
 fi
 
 # ─── python install ──────────────────────────────────────────────────────────
-EXTRAS=""
+# [cli] is always required — without it the `musicorg` command has no Typer/Textual/Rich.
+EXTRAS="cli"
 if prompt_yes "Install shazamio (Shazam audio fingerprinting)?" y; then
-    EXTRAS="${EXTRAS}shazam,"
+    EXTRAS="${EXTRAS},shazam"
 fi
-EXTRAS="${EXTRAS%,}"
 PIP_TARGET=".[${EXTRAS}]"
-[ -z "$EXTRAS" ] && PIP_TARGET="."
 
 if [ "$USE_USER" -eq 1 ]; then
     say "installing musicorg into ~/.local (user-install)"

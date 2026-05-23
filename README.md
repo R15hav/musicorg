@@ -200,40 +200,52 @@ shazam_no_match                   audio fingerprint failed
 ## What's where
 
 ```
-src/musicorg/
-├── clean.py            junk regex, query prep, version-marker logic
-├── tags.py             mutagen → ffprobe → mediainfo cascade + writers
-├── models.py           dataclasses (Track, ResolvedTrack, TierMatch, ApplyResult)
-├── config.py           XDG-Linux config + per-library state dirs
-├── scan.py             walk + per-file tag read
-├── dedupe.py           group + score winners
-├── resolve.py          folder/tag/filename reconciliation + country heuristics
-├── planner.py          destination tree building + album-counts demotion
-├── executor.py         move/copy/symlink + collision handling + undo .sh
-├── misc.py             non-audio sweep
-├── zip_probe.py        detect zip backups of already-organized folders
-├── canonicalize.py     diff + apply + guardrails
-├── backup.py           snapshot + thin undo script generator
-├── approval.py         CSV round-trip + batch rule
-├── upgrade.py          gamdl wrapper + ffprobe verification + skip taxonomy
-├── refingerprint.py    Shazam pass + orphan recovery
-├── lookup/
-│   ├── itunes.py, jiosaavn.py, shazam.py
-│   ├── scoring.py      title × 0.55, artist × 0.25, duration × 0.20, +bonuses/-penalties
-│   ├── breaker.py      circuit breaker for unofficial APIs
-│   └── __init__.py     chain() orchestrator
-└── cli/
-    ├── main.py         Typer entry — 30 subcommands
-    ├── wizard.py       guided end-to-end wizard
-    └── tui/            review_app, fill_app, dup_review_app, canonical_app
-tests/fixtures/
-└── build_fixture.py    regenerates the sample library
+src/musicorg/                   library — pure Python, no CLI deps
+├── clean.py                    junk regex, query prep, version-marker logic
+├── tags.py                     mutagen → ffprobe → mediainfo cascade + writers
+├── identity.py                 audio-stream sha256 (content-addressed join key)
+├── models.py                   dataclasses (Track, ResolvedTrack, TierMatch, ApplyResult, ProgressEvent, SkipReason)
+├── config.py                   XDG-Linux config + per-library state dirs
+├── scan.py                     walk + per-file tag read
+├── dedupe.py                   group + score winners
+├── resolve.py                  folder/tag/filename reconciliation + country heuristics
+├── planner.py                  destination tree building + album-counts demotion
+├── executor.py                 move/copy/symlink + collision handling + undo .sh
+├── misc.py                     non-audio sweep
+├── zip_probe.py                detect zip backups of already-organized folders
+├── canonicalize.py             diff + apply + guardrails
+├── backup.py                   snapshot + thin undo script generator
+├── approval.py                 CSV round-trip + batch rule
+├── upgrade.py                  upgrade orchestration + ffprobe verification + skip taxonomy
+├── refingerprint.py            Shazam pass + orphan recovery
+├── extensions/                 plugin protocol for third-party upgraders (gamdl, ...)
+│   └── protocol.py             UpgradeExtension, UpgradeCandidate, UpgradeResult, PreflightResult
+└── lookup/
+    ├── itunes.py, jiosaavn.py, shazam.py
+    ├── scoring.py              title × 0.55, artist × 0.25, duration × 0.20, +bonuses/-penalties
+    ├── breaker.py              circuit breaker for unofficial APIs
+    └── __init__.py             chain() orchestrator
 
-_organizer/                 design doc + reference scripts (the original 34-script pipeline)
-├── TERMINAL_APP_PLAN.md   the design this implementation lifts from
-└── scripts/               34 production scripts (read-only reference)
+src/musicorg_cli/               reference CLI consumer — Typer + Textual + Rich
+├── main.py                     Typer entry — 30 subcommands
+├── wizard.py                   guided end-to-end wizard
+└── tui/                        review_app, fill_app, dup_review_app, canonical_app
 
-install.sh                 distro-aware installer
+tests/fixtures/build_fixture.py regenerates the demo library
+
+examples/                       embedding patterns
+├── 01_basic_scan.py
+├── 02_progress_callback.py
+├── 03_full_pipeline.py
+├── 04_custom_extension.py
+├── 05_embed_in_fastapi.py
+└── 06_embed_in_pyside.py
+
+PUBLIC_API.md                   library API contract (SemVer after v1.0)
+install.sh                      distro-aware installer
+```
+
+The library (`musicorg`) is pure-Python with only `mutagen` + `requests`. The CLI (`musicorg_cli`) adds Typer/Textual/Rich and is installed via the `[cli]` extra. Embedders use the library directly — see `examples/` and `PUBLIC_API.md`.
 ```
 
 ---

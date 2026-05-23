@@ -5,17 +5,331 @@ the snapshot body produced 41 MB scripts that were unreviewable and slow
 to load. Both the tag snapshot and the ops list live as sibling JSON
 files; the script reads them at runtime via paths baked in as string
 literals. This keeps the script under a few KB regardless of library size.
+
+CORE-14: ``SnapshotStore`` is the SQLite-backed successor to the path-keyed
+JSON snapshot. It keys on ``fingerprint_sha256`` so snapshots survive renames
+and tag rewrites, and excludes large binary frames (APIC, covr, GEOB, PRIV,
+USLT) by default. The legacy JSON path remains for the CLI; SnapshotStore is
+purely additive until Wave 3 migrates the CLI.
 """
 
 from __future__ import annotations
 
 import datetime
 import json
+import logging
 import shutil
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 from . import tags as tags_mod
+
+logger = logging.getLogger(__name__)
+
+
+DEFAULT_EXCLUDED_FRAMES: frozenset[str] = frozenset({
+    "APIC", "covr", "GEOB", "PRIV", "USLT",
+})
+
+
+def _serialize_frame(value: Any) -> dict:
+    """Serialize a single mutagen frame to a JSON-safe ``{kind, values}`` dict.
+
+    Multi-value text frames get joined as a flat list of strings rather than
+    nested lists. Mirrors the reference in optimization.md §CORE-14.
+    """
+    if hasattr(value, "text"):
+        vals = value.text
+    elif isinstance(value, (list, tuple)):
+        vals = list(value)
+    else:
+        vals = [value]
+    if not isinstance(vals, (list, tuple)):
+        vals = [vals]
+    return {"kind": type(value).__name__, "values": [str(x) for x in vals]}
+
+
+# ID3 text-frame kinds we know how to reconstruct. Anything else is logged
+# and skipped on deserialize rather than raising — partial restores beat hard
+# failures when one obscure frame trips us up.
+_ID3_TEXT_FRAMES = ("TIT2", "TPE1", "TPE2", "TALB", "TDRC", "TYER", "TRCK", "TCON")
+
+
+def _deserialize_frame(spec: dict) -> Any:
+    """Reconstruct an ID3 frame instance from a ``_serialize_frame`` dict.
+
+    Returns ``None`` and logs a warning for unrecognized frame kinds. Caller
+    is responsible for assigning the result onto an ID3 tag container.
+    For M4A and FLAC, frames are plain key/value pairs and don't need this.
+    """
+    kind = spec.get("kind", "")
+    values = spec.get("values", []) or [""]
+    text = values[0] if values else ""
+    if kind in _ID3_TEXT_FRAMES:
+        from mutagen import id3 as _id3
+        cls = getattr(_id3, kind, None)
+        if cls is None:
+            logger.warning("backup: unknown ID3 frame class %r on deserialize, skipping", kind)
+            return None
+        try:
+            return cls(encoding=3, text=text)
+        except Exception as e:
+            logger.warning("backup: failed to construct %s frame: %s", kind, e)
+            return None
+    logger.warning("backup: unrecognized frame kind %r on deserialize, skipping", kind)
+    return None
+
+
+class SnapshotStore:
+    """SQLite-backed per-file frame snapshots, keyed by fingerprint_sha256.
+
+    Survives renames and tag rewrites. Excludes large binary frames (APIC, etc.)
+    by default to keep snapshot size proportional to the corpus.
+    See _organizer/optimization.md §CORE-14.
+    """
+
+    SCHEMA = '''
+        CREATE TABLE IF NOT EXISTS snapshots (
+            fingerprint_sha256 TEXT NOT NULL,
+            path TEXT NOT NULL,
+            frames_json TEXT NOT NULL,
+            tag_format TEXT NOT NULL,
+            taken_at TEXT NOT NULL,
+            run_id TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (fingerprint_sha256, taken_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_fingerprint ON snapshots(fingerprint_sha256);
+        CREATE INDEX IF NOT EXISTS idx_snapshots_run_id ON snapshots(run_id) WHERE run_id != '';
+    '''
+
+    def __init__(
+        self,
+        db_path: Path,
+        excluded_frames: frozenset[str] = DEFAULT_EXCLUDED_FRAMES,
+    ) -> None:
+        self.db_path = Path(db_path)
+        self.excluded_frames = excluded_frames
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # check_same_thread=False so callers can hand the store off across
+        # worker threads; concurrent writes are still serialized by SQLite.
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(self.SCHEMA)
+        self.conn.commit()
+
+    @staticmethod
+    def _tag_format_for(path: Path) -> str:
+        ext = path.suffix.lower()
+        if ext == ".mp3":
+            return "id3"
+        if ext == ".m4a":
+            return "mp4"
+        if ext == ".flac":
+            return "flac"
+        return ext.lstrip(".") or "unknown"
+
+    @staticmethod
+    def _now_iso() -> str:
+        # UTC isoformat with microsecond precision — also satisfies the
+        # PRIMARY KEY (fingerprint_sha256, taken_at) uniqueness in practice.
+        return datetime.datetime.utcnow().isoformat(timespec="microseconds")
+
+    def record(
+        self,
+        path: Path,
+        fingerprint_sha256: str,
+        run_id: str = "",
+    ) -> None:
+        """Read tags from path, serialize non-excluded frames, write to SQLite.
+
+        The caller pre-computes the fingerprint via
+        :func:`musicorg.identity.audio_stream_sha256`. SnapshotStore is a pure
+        storage layer and does not invoke ffmpeg itself.
+        """
+        path = Path(path)
+        # Lazy import so SnapshotStore is importable in embedders that skip
+        # audio deps (the storage layer alone needs no mutagen).
+        try:
+            from mutagen import File as MutagenFile
+        except ImportError:
+            logger.error("backup: mutagen not available, cannot snapshot %s", path)
+            return
+
+        frames: dict[str, dict] = {}
+        try:
+            audio = MutagenFile(path)
+            if audio is not None and audio.tags:
+                for key, value in audio.tags.items():
+                    key_str = str(key)
+                    # ID3 keys can come as "APIC:cover", "PRIV:something" etc.
+                    base = key_str.split(":", 1)[0]
+                    if base in self.excluded_frames:
+                        continue
+                    try:
+                        frames[key_str] = _serialize_frame(value)
+                    except Exception as e:
+                        logger.warning(
+                            "backup: failed to serialize frame %s on %s: %s",
+                            key_str, path, e,
+                        )
+        except Exception as e:
+            logger.warning("backup: cannot read tags from %s: %s", path, e)
+
+        tag_format = self._tag_format_for(path)
+        taken_at = self._now_iso()
+        frames_json = json.dumps(frames, separators=(",", ":"))
+
+        try:
+            with self.conn:
+                self.conn.execute(
+                    "INSERT INTO snapshots"
+                    " (fingerprint_sha256, path, frames_json, tag_format, taken_at, run_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (fingerprint_sha256, str(path), frames_json, tag_format, taken_at, run_id),
+                )
+        except sqlite3.IntegrityError:
+            # Same fingerprint + identical microsecond timestamp: extremely
+            # unlikely outside of synthetic tests, but be deterministic.
+            logger.warning(
+                "backup: duplicate snapshot key for fingerprint=%s taken_at=%s — skipped",
+                fingerprint_sha256, taken_at,
+            )
+        logger.info(
+            "backup: recorded snapshot fingerprint=%s path=%s frames=%d run_id=%s",
+            fingerprint_sha256, path, len(frames), run_id or "-",
+        )
+
+    def latest(self, fingerprint_sha256: str) -> dict | None:
+        """Return the most-recent snapshot for the given fingerprint, or None."""
+        cur = self.conn.execute(
+            "SELECT fingerprint_sha256, path, frames_json, tag_format, taken_at, run_id"
+            " FROM snapshots WHERE fingerprint_sha256 = ?"
+            " ORDER BY taken_at DESC LIMIT 1",
+            (fingerprint_sha256,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def history(self, fingerprint_sha256: str) -> list[dict]:
+        """Return all snapshots for the given fingerprint, newest first."""
+        cur = self.conn.execute(
+            "SELECT fingerprint_sha256, path, frames_json, tag_format, taken_at, run_id"
+            " FROM snapshots WHERE fingerprint_sha256 = ?"
+            " ORDER BY taken_at DESC",
+            (fingerprint_sha256,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def restore(self, fingerprint_sha256: str, target_path: Path) -> bool:
+        """Restore the most-recent snapshot's tags onto ``target_path``.
+
+        Returns ``True`` on success, ``False`` if no snapshot exists for
+        that fingerprint or if mutagen cannot be loaded.
+        """
+        snap = self.latest(fingerprint_sha256)
+        if snap is None:
+            logger.warning(
+                "backup: no snapshot for fingerprint=%s — nothing to restore",
+                fingerprint_sha256,
+            )
+            return False
+        target = Path(target_path)
+        try:
+            frames = json.loads(snap["frames_json"])
+        except (TypeError, ValueError) as e:
+            logger.error("backup: snapshot frames_json unreadable for %s: %s", fingerprint_sha256, e)
+            return False
+        tag_format = snap.get("tag_format") or self._tag_format_for(target)
+        try:
+            if tag_format == "id3":
+                self._restore_id3(target, frames)
+            elif tag_format == "mp4":
+                self._restore_mp4(target, frames)
+            elif tag_format == "flac":
+                self._restore_flac(target, frames)
+            else:
+                logger.warning(
+                    "backup: unknown tag_format %r for %s — cannot restore",
+                    tag_format, target,
+                )
+                return False
+        except Exception as e:
+            logger.error("backup: tag restore failed for %s: %s: %s", target, type(e).__name__, e)
+            return False
+        return True
+
+    @staticmethod
+    def _restore_id3(path: Path, frames: dict[str, dict]) -> None:
+        from mutagen.id3 import ID3, ID3NoHeaderError
+        try:
+            audio = ID3(path)
+        except ID3NoHeaderError:
+            audio = ID3()
+        # Wipe the kinds we're about to restore so we don't double up.
+        for kind in {spec.get("kind", "") for spec in frames.values()}:
+            if kind:
+                audio.delall(kind)
+        for _key, spec in frames.items():
+            frame = _deserialize_frame(spec)
+            if frame is None:
+                continue
+            try:
+                audio.add(frame)
+            except Exception as e:
+                logger.warning("backup: id3 add failed for %s: %s", spec.get("kind"), e)
+        audio.save(path, v2_version=4)
+
+    @staticmethod
+    def _restore_mp4(path: Path, frames: dict[str, dict]) -> None:
+        from mutagen.mp4 import MP4
+        audio = MP4(path)
+        for key in list(frames.keys()):
+            if key in audio:
+                del audio[key]
+        for key, spec in frames.items():
+            values = spec.get("values", [])
+            try:
+                if key == "trkn":
+                    # trkn round-trips as a list of "(track, total)" string tuples;
+                    # be defensive about parsing back into ints.
+                    raw = values[0] if values else ""
+                    parts = str(raw).strip("()").split(",")
+                    track_num = int(parts[0].strip()) if parts and parts[0].strip() else 0
+                    total = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
+                    audio["trkn"] = [(track_num, total)]
+                else:
+                    audio[key] = list(values)
+            except Exception as e:
+                logger.warning("backup: mp4 set failed for %s: %s", key, e)
+        audio.save()
+
+    @staticmethod
+    def _restore_flac(path: Path, frames: dict[str, dict]) -> None:
+        from mutagen.flac import FLAC
+        audio = FLAC(path)
+        audio.clear()
+        for key, spec in frames.items():
+            values = spec.get("values", [])
+            try:
+                audio[key] = [str(x) for x in values] if values else [""]
+            except Exception as e:
+                logger.warning("backup: flac set failed for %s: %s", key, e)
+        audio.save()
+
+    def close(self) -> None:
+        try:
+            self.conn.close()
+        except sqlite3.Error as e:
+            logger.warning("backup: SnapshotStore close raised %s", e)
+
+    def __enter__(self) -> SnapshotStore:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
 
 def snapshot_tags(paths: list[Path], snapshot_path: Path) -> Path:
@@ -226,12 +540,12 @@ def generate_undo_script(
 
 
 def list_snapshots(state_dir: Path) -> list[dict]:
-    """Return metadata for every ``tag_snapshot_*.json`` in ``<state>/backups``.
+    """Return metadata for every legacy ``tag_snapshot_*.json`` in ``<state>/backups``.
 
-    Each entry: ``{path, ts, size, ops_count}``. ``ts`` is parsed from the
-    filename tail (``..._<YYYY-MM-DD_HHMMSS>.json``) when possible, else file
-    mtime. ``ops_count`` is looked up from the sibling undo's ops file if
-    present, else 0.
+    Legacy path-keyed JSON snapshots only. For fingerprint-keyed snapshots
+    use :class:`SnapshotStore`. Each entry: ``{path, ts, size, ops_count}``.
+    ``ts`` is parsed from the filename tail when possible, else file mtime.
+    ``ops_count`` is from the sibling undo ops file when present, else 0.
     """
     backups = Path(state_dir) / "backups"
     if not backups.exists():

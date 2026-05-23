@@ -1,9 +1,16 @@
 """Per-library + global config loader.
 
-Linux-only paths follow XDG conventions:
+By default, paths follow Linux XDG conventions:
    Global config:  ~/.config/musicorg/config.ini
    Per-library:    ~/.local/share/musicorg/<slug>/config.ini
    State dir:      ~/.local/share/musicorg/<slug>/
+
+These XDG locations are exposed at module level as ``GLOBAL_CONFIG`` and
+``STATE_ROOT`` and are used as defaults. Embedders (Docker, Electron, Tauri,
+web app, non-Linux hosts) can override them per call by passing
+``state_root`` and/or ``global_config_path`` to :func:`load_config`,
+:func:`resolve_library`, and :func:`save_global_config`. The XDG defaults are
+applied only when these overrides are not supplied.
 """
 
 from __future__ import annotations
@@ -26,6 +33,13 @@ STATE_ROOT = XDG_DATA_HOME / "musicorg"
 
 @dataclass
 class Config:
+    """Per-library + global configuration record.
+
+    Constructed by :func:`load_config`; rarely built directly. ``state_root``
+    overrides the XDG data directory for embedders (Docker, Electron, Tauri).
+    When ``None``, XDG defaults apply — no behaviour change for CLI users.
+    """
+
     acoustid_app_api_key: str = ""
     musicbrainz_user_agent: str = "musicorg/0.1 (anonymous)"
     musicbrainz_contact: str = ""
@@ -43,6 +57,7 @@ class Config:
     library_slug: str = ""
     library_root: str = ""
     state_dir: str = ""
+    state_root: Path | None = field(default=None)
 
     @property
     def state_path(self) -> Path:
@@ -61,11 +76,20 @@ def slugify_path(p: Path) -> str:
     return f"{base[-40:]}-{digest}" if len(base) > 40 else f"{base}-{digest}"
 
 
-def resolve_library(library: str | None, root: Path | None = None) -> tuple[str, Path]:
+def resolve_library(
+    library: str | None,
+    root: Path | None = None,
+    state_root: Path | None = None,
+) -> tuple[str, Path]:
     """Return (slug, library_root). If library is given as an existing slug
-    on disk, reuse it; else derive from root (defaults to CWD)."""
+    on disk, reuse it; else derive from root (defaults to CWD).
+
+    ``state_root`` lets embedders override the location searched for an
+    existing slug. When ``None``, the XDG-derived ``STATE_ROOT`` is used.
+    """
+    base = state_root if state_root is not None else STATE_ROOT
     if library:
-        existing = STATE_ROOT / library
+        existing = base / library
         if existing.exists():
             cfg_ini = existing / "config.ini"
             if cfg_ini.exists():
@@ -95,10 +119,33 @@ def _merge(global_p: configparser.ConfigParser, lib_p: configparser.ConfigParser
     return default
 
 
-def load_config(library: str | None = None, root: Path | None = None) -> Config:
-    slug, lib_root = resolve_library(library, root)
-    state_dir = STATE_ROOT / slug
-    global_p = _read_ini(GLOBAL_CONFIG)
+def load_config(
+    library: str | None = None,
+    root: Path | None = None,
+    state_root: Path | None = None,
+    global_config_path: Path | None = None,
+) -> Config:
+    """Load and merge global + per-library INI config into a :class:`Config`.
+
+    XDG defaults (``~/.config/musicorg/config.ini`` and
+    ``~/.local/share/musicorg/``) apply when ``state_root`` and
+    ``global_config_path`` are None. Embedders pass explicit paths to
+    isolate state from the system-wide XDG tree.
+
+    Args:
+        library: Existing library slug. When supplied, the slug's state
+            directory is used directly; the slug is not re-derived from ``root``.
+        root: Library root path. Used to derive the slug when ``library`` is
+            absent. Defaults to CWD.
+        state_root: Override for the data directory root. Useful in Docker,
+            Electron, or Windows embeds.
+        global_config_path: Override for the global INI file path.
+    """
+    base_state_root = state_root if state_root is not None else STATE_ROOT
+    base_global_config = global_config_path if global_config_path is not None else GLOBAL_CONFIG
+    slug, lib_root = resolve_library(library, root, state_root=base_state_root)
+    state_dir = base_state_root / slug
+    global_p = _read_ini(base_global_config)
     lib_p = _read_ini(state_dir / "config.ini")
     cfg = Config(
         acoustid_app_api_key=_merge(global_p, lib_p, "acoustid", "api_key", ""),
@@ -120,11 +167,16 @@ def load_config(library: str | None = None, root: Path | None = None) -> Config:
         library_slug=slug,
         library_root=str(lib_root),
         state_dir=str(state_dir),
+        state_root=base_state_root,
     )
     return cfg
 
 
 def ensure_state_dir(cfg: Config) -> Path:
+    """Create the library state directory tree (state/, backups/, logs/).
+
+    Idempotent. Returns the created (or already-existing) state path.
+    """
     p = cfg.state_path
     p.mkdir(parents=True, exist_ok=True)
     (p / "backups").mkdir(exist_ok=True)
@@ -150,15 +202,22 @@ def save_library_config(cfg: Config, updates: dict[str, dict[str, str]]) -> None
         parser.write(f)
 
 
-def save_global_config(updates: dict[str, dict[str, str]]) -> None:
-    GLOBAL_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    parser = _read_ini(GLOBAL_CONFIG)
+def save_global_config(updates: dict[str, dict[str, str]], path: Path | None = None) -> None:
+    """Write or update the global INI config file.
+
+    ``updates`` is a ``{section: {key: value}}`` dict. Sections are created
+    if absent; existing unrelated keys are preserved. Uses the XDG default
+    path when ``path`` is None.
+    """
+    target = path if path is not None else GLOBAL_CONFIG
+    target.parent.mkdir(parents=True, exist_ok=True)
+    parser = _read_ini(target)
     for section, kv in updates.items():
         if not parser.has_section(section):
             parser.add_section(section)
         for k, v in kv.items():
             parser.set(section, k, str(v))
-    with GLOBAL_CONFIG.open("w") as f:
+    with target.open("w") as f:
         parser.write(f)
 
 

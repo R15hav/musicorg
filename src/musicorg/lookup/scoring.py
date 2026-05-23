@@ -117,7 +117,12 @@ def score_match(
 
 
 def decide(score: float, threshold_auto: float = 0.86, threshold_review: float = 0.65) -> str:
-    """Bucket a score into ``auto_apply`` / ``review`` / ``low``."""
+    """Bucket a confidence score into ``"auto_apply"`` / ``"review"`` / ``"low"``.
+
+    Thresholds mirror ``Config.auto_apply_threshold`` / ``Config.review_threshold``
+    defaults. Callers should pass the config values rather than the defaults
+    so threshold changes in the config propagate without re-import.
+    """
     if score >= threshold_auto:
         return "auto_apply"
     if score >= threshold_review:

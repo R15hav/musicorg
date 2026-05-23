@@ -43,9 +43,10 @@ def decade_of(year: str) -> str:
 def build_destination(row: dict, music_root: Path) -> str:
     """Compute the target absolute path for one resolved row.
 
-    ``music_root`` is the library root that contains the ``Music/`` tree
-    (the caller is expected to pass ``cfg.root_path``). The function
-    appends ``Music/<bucket>/...`` to mirror the source pipeline layout.
+    Implements the country/decade/album path scheme (default scheme). The
+    resulting path is under ``music_root/Music/<bucket>/...``. Hollywood
+    album tracks land at ``Hollywood/<decade>/<artist>/<album>/``; Bollywood
+    singles go to ``Singles/Bollywood/<artist>/`` or ``Singles/Punjabi/<artist>/``.
     """
     root = Path(music_root) / "Music"
     country = row.get("country", "")

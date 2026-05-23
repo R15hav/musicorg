@@ -11,14 +11,19 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import re
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from . import backup, tags as tags_mod
 from .clean import safe_filename, TRACK_PREFIX_RX
-from .models import ApplyResult
+from .models import ApplyResult, ProgressEvent
+
+
+logger = logging.getLogger(__name__)
 
 
 _WRITABLE_EXTS = {".mp3", ".m4a", ".flac"}
@@ -115,11 +120,16 @@ def build_diff(
     dryrun_csv_out: Path,
     promote_set: set[str] | None = None,
 ) -> dict:
-    """Read the merged CSV, apply promotions, write the per-row diff CSV.
+    """Compute the per-row tag diff from the merged lookup CSV.
 
-    Returns a summary dict with totals, promoted count, eligible count, and
-    per-field action counters (``set`` / ``change`` / ``keep``) plus
-    ``fn_rename`` / ``fn_keep`` filename action counters.
+    Reads the ``16_merged.csv``, applies any promotions in ``promote_set``
+    (source paths that should be treated as ``auto_apply``), and writes a
+    ``17_dryrun_diff.csv`` for review. Returns a summary dict:
+    ``{total, promoted, eligible, field_actions, by_source, diff_csv}``.
+
+    Args:
+        promote_set: Set of ``source_path`` strings to force to ``auto_apply``
+            even if their original decision was ``review``.
     """
     merged_csv_path = Path(merged_csv_path)
     dryrun_csv_out = Path(dryrun_csv_out)
@@ -218,14 +228,12 @@ def pick_source_for_row(
     row: dict,
     preference: list[str],
 ) -> tuple[dict | None, str]:
-    """Return (fields_dict, source_label) following the preference order.
+    """Return ``(fields_dict, source_label)`` from a merged-CSV row.
 
-    Each tier pulls from its own CSV column prefix: ``jio_*`` for JioSaavn,
-    ``shazam_*`` for Shazam, ``api_*`` for iTunes. JioSaavn doesn't carry a
-    track number; iTunes does. Genre for JioSaavn maps Hindi/Bhojpuri to
-    ``Bollywood`` (matches the curated genre we'd want in tags).
-
-    Returns ``(None, "")`` if no tier in ``preference`` has data.
+    Iterates ``preference`` (e.g. ``["jiosaavn", "shazam", "itunes"]``) and
+    returns the first tier's fields that have a non-empty title. Each tier
+    reads its own CSV column prefix (``jio_*``, ``shazam_*``, ``api_*``).
+    Returns ``(None, "")`` if no tier in the preference list has data.
     """
     for tier in preference:
         fields = _extract_tier(row, tier)
@@ -373,6 +381,7 @@ def apply(
     rename: bool = True,
     include_low: bool = False,
     source_preference: list[str] | None = None,
+    progress: Callable[[ProgressEvent], None] | None = None,
 ) -> ApplyResult:
     """Walk the diff CSV (or merged CSV for ``include_low``) and apply edits.
 
@@ -407,18 +416,38 @@ def apply(
     snapshot: dict[str, dict] = {}
     undo_ops: list[dict] = []
     result = ApplyResult()
+    total = len(rows)
 
-    for r in rows:
+    for i, r in enumerate(rows, start=1):
         source_path = r.get("source_path", "")
         path = Path(source_path)
         if not source_path or not path.exists():
             result.errors += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="lookup",
+                    current=i,
+                    total=total,
+                    path=source_path,
+                    message="missing_file",
+                    error=True,
+                ))
             continue
 
+        tier_winning = ""
         if include_low:
             merged_row = r
-            picked, _src_label = pick_source_for_row(merged_row, preference)
+            picked, src_label = pick_source_for_row(merged_row, preference)
+            tier_winning = src_label
             if picked is None:
+                if progress is not None:
+                    progress(ProgressEvent(
+                        phase="lookup",
+                        current=i,
+                        total=total,
+                        path=str(path),
+                        message="no_source",
+                    ))
                 continue
             api_title = picked["title"]
             api_artist = picked["artist"]
@@ -428,12 +457,22 @@ def apply(
             api_genre = picked["genre"]
         else:
             merged_row = merged_by_path.get(source_path, r)
+            tier_winning = _detect_source(merged_row)
             api_title = (merged_row.get("api_title") or "").strip()
             api_artist = (merged_row.get("api_artist") or "").strip()
             api_album = (merged_row.get("api_album") or "").strip()
             api_year = (merged_row.get("api_year") or "").strip()[:4]
             api_track = (merged_row.get("api_track_num") or "").strip()
             api_genre = (merged_row.get("api_genre") or "").strip()
+
+        if progress is not None:
+            progress(ProgressEvent(
+                phase="lookup",
+                current=i,
+                total=total,
+                path=str(path),
+                message=tier_winning or "",
+            ))
 
         if not api_title:
             continue
@@ -517,6 +556,7 @@ def apply_approvals(
     *,
     dry_run: bool = False,
     rename: bool = True,
+    progress: Callable[[ProgressEvent], None] | None = None,
 ) -> ApplyResult:
     """Apply user approvals from ``19_approvals.json``.
 
@@ -540,18 +580,46 @@ def apply_approvals(
     snapshot: dict[str, dict] = {}
     undo_ops: list[dict] = []
     result = ApplyResult()
+    approval_items = list(by_path.items())
+    total = len(approval_items)
 
-    for source_path, approval in by_path.items():
+    for i, (source_path, approval) in enumerate(approval_items, start=1):
         pick = (approval.get("pick") or "").lower()
         if pick in ("", "skip"):
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="lookup",
+                    current=i,
+                    total=total,
+                    path=source_path,
+                    message=pick or "skip",
+                ))
             continue
 
         path = Path(source_path)
         if not path.exists():
             result.errors += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="lookup",
+                    current=i,
+                    total=total,
+                    path=source_path,
+                    message="missing_file",
+                    error=True,
+                ))
             continue
 
         row = merged_rows.get(source_path) or {}
+
+        if progress is not None:
+            progress(ProgressEvent(
+                phase="lookup",
+                current=i,
+                total=total,
+                path=source_path,
+                message=pick,
+            ))
 
         if pick == "manual":
             manual = approval.get("manual_fields") or {}

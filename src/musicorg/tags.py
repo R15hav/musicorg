@@ -139,8 +139,12 @@ def _from_mediainfo(path: Path) -> tuple[dict | None, str, float, int]:
 
 
 def read(path: Path) -> Track:
-    """Cascade mutagen → ffprobe → mediainfo. Returns a Track with whatever
-    fields we could recover; ``tag_source`` records the tier that succeeded.
+    """Read audio tags from ``path`` via mutagen, then ffprobe, then mediainfo.
+
+    Each backend is tried in order until one returns useful tags. ``tag_source``
+    on the returned :class:`Track` records which backend succeeded (e.g.
+    ``"mutagen-ok"``, ``"ffprobe-ok"``). Bitrate is normalised to kbps
+    regardless of which backend returned it.
     """
     p = Path(path)
     size = p.stat().st_size if p.exists() else 0
@@ -176,7 +180,13 @@ def read(path: Path) -> Track:
 
 
 def snapshot(path: Path) -> dict:
-    """Capture every tag frame currently on the file. JSON-serialisable."""
+    """Capture every tag frame currently on ``path`` as a JSON-serialisable dict.
+
+    Used before a tag write to enable undo. Returns
+    ``{original_filename, ext, tags: {frame_key: value}}``. Any frame that
+    cannot be serialised is silently dropped; partial snapshots are still
+    valid for undo purposes.
+    """
     snap: dict = {"original_filename": path.name, "ext": path.suffix.lower(), "tags": {}}
     try:
         a = MutagenFile(path)
@@ -254,7 +264,12 @@ def write_flac(path: Path, fields: dict[str, str]) -> None:
 
 
 def write(path: Path, fields: dict[str, str]) -> None:
-    """Dispatch to the right writer based on extension. Raises on unsupported."""
+    """Write canonical tag fields to ``path``, dispatching by extension.
+
+    Supported: ``.mp3`` (ID3v2.4), ``.m4a`` (MP4 atoms), ``.flac`` (Vorbis
+    Comments). Raises ``ValueError`` for any other extension. The seven
+    canonical fields are: title, artist, albumartist, album, year, track, genre.
+    """
     ext = path.suffix.lower()
     if ext == ".mp3":
         write_mp3(path, fields)

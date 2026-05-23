@@ -158,6 +158,11 @@ def parse_track_num(filename: str, tag_track: str) -> str:
 
 
 def title_from_filename(filename: str) -> str:
+    """Derive a clean title string from a bare filename stem.
+
+    Strips the track-number prefix (e.g. ``"03 - "``) then runs
+    :func:`strip_junk`. Used when a file has no usable title tag.
+    """
     name = Path(filename).stem
     name = TRACK_PREFIX_RX.sub("", name)
     return strip_junk(name)
@@ -170,6 +175,7 @@ def junkiness(filename: str) -> int:
 
 
 def strip_year_suffix(album: str) -> str:
+    """Remove a trailing ``(YYYY)`` suffix from an album string."""
     return YEAR_SUFFIX_RX.sub("", album).strip()
 
 
@@ -205,6 +211,12 @@ def safe(s: str, maxlen: int = 120) -> str:
 
 
 def safe_filename(s: str, maxlen: int = 180) -> str:
+    """Strip filesystem-unsafe characters for use as a literal filename.
+
+    Lighter than :func:`safe`: removes only control characters and shell
+    metacharacters without performing junk-pattern or URL stripping. Suitable
+    for the already-cleaned ``NN - Title.ext`` final form.
+    """
     s = (s or "").strip()
     s = UNSAFE_FN_RX.sub("", s)
     s = re.sub(r"\s+", " ", s).strip(" .")
@@ -212,5 +224,5 @@ def safe_filename(s: str, maxlen: int = 180) -> str:
 
 
 def normalize_key(s: str) -> str:
-    """Lowercase, alpha-only — used for dedupe grouping."""
+    """Lowercase, alpha-only key for dedupe grouping comparisons."""
     return re.sub(r"[^a-z]", "", (s or "").lower())

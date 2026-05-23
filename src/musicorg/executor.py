@@ -12,8 +12,11 @@ import os
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
+
+from .models import ProgressEvent
 
 
 ApplyMode = Literal["move", "copy", "symlink"]
@@ -94,6 +97,8 @@ def execute_plan(
     mode: ApplyMode,
     dest: Path | None = None,
     dry_run: bool = False,
+    *,
+    progress: Callable[[ProgressEvent], None] | None = None,
 ) -> dict:
     """Apply every row in ``09_plan.csv`` then quarantine duplicates.
 
@@ -137,8 +142,13 @@ def execute_plan(
     collisions: list[dict] = []
     undo_lines: list[str] = []
 
+    # Unified progress counter — winners + duplicates form a single ``apply`` phase.
+    apply_total = len(plan_rows) + len(dup_rows)
+    apply_idx = 0
+
     log("\n=== WINNERS ===")
     for r in plan_rows:
+        apply_idx += 1
         src_str = r.get("source", "")
         plan_dst_str = r.get("destination", "")
         src = Path(src_str)
@@ -147,9 +157,19 @@ def execute_plan(
         if not src.exists():
             log(f"MISSING SRC: {src_str}")
             missing += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="apply", current=apply_idx, total=apply_total,
+                    path=str(src), message="missing", error=True,
+                ))
             continue
         if str(src) == str(dst):
             noop += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="apply", current=apply_idx, total=apply_total,
+                    path=str(dst), message="skip",
+                ))
             continue
 
         try:
@@ -166,9 +186,19 @@ def execute_plan(
                 _apply_one(src, dst, mode)
                 undo_lines.append(_undo_for(mode, src, dst))
             moved += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="apply", current=apply_idx, total=apply_total,
+                    path=str(dst), message=mode,
+                ))
         except Exception as e:
             log(f"ERROR: {src} -> {dst}: {e}")
             errors += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="apply", current=apply_idx, total=apply_total,
+                    path=str(dst), message=str(e), error=True,
+                ))
 
     log("\n=== DUPLICATES (quarantine) ===")
     dup_moved = 0
@@ -176,11 +206,17 @@ def execute_plan(
     # from each duplicate's path by treating its first ``Music`` ancestor
     # as the library root.
     for r in dup_rows:
+        apply_idx += 1
         src_str = r.get("path", "")
         src = Path(src_str)
         if not src.exists():
             log(f"MISSING DUP SRC: {src_str}")
             missing += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="apply", current=apply_idx, total=apply_total,
+                    path=str(src), message="missing", error=True,
+                ))
             continue
 
         if dest is not None and mode == "copy":
@@ -216,9 +252,19 @@ def execute_plan(
                 undo_lines.append(_undo_for(mode, src, dst))
             dup_moved += 1
             log(f"DUP: {src} -> {dst}")
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="apply", current=apply_idx, total=apply_total,
+                    path=str(dst), message=mode,
+                ))
         except Exception as e:
             log(f"ERROR DUP: {src} -> {dst}: {e}")
             errors += 1
+            if progress is not None:
+                progress(ProgressEvent(
+                    phase="apply", current=apply_idx, total=apply_total,
+                    path=str(dst), message=str(e), error=True,
+                ))
 
     if not dry_run and undo_lines:
         _write_undo(undo_path, undo_lines)
@@ -258,7 +304,11 @@ def execute_plan(
 
 
 def run_undo(undo_script_path: Path) -> int:
-    """Execute a previously generated ``undo_<TS>.sh``. Returns the exit code."""
+    """Execute a previously generated ``undo_<TS>.sh`` bash script.
+
+    Raises ``FileNotFoundError`` if the script does not exist. Returns the
+    shell exit code (0 on full success, non-zero on any reversal failure).
+    """
     p = Path(undo_script_path)
     if not p.exists():
         raise FileNotFoundError(p)

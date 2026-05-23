@@ -15,6 +15,7 @@ import datetime
 import logging
 import shutil
 import time
+from collections.abc import Callable
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from .clean import safe_filename
 from .config import DEFAULT_EXCLUDE_DIR_NAMES
 from .lookup import shazam as shazam_lookup
 from .lookup.breaker import CircuitBreaker
-from .models import TierMatch
+from .models import ProgressEvent, TierMatch
 
 
 logger = logging.getLogger(__name__)
@@ -165,6 +166,7 @@ def refingerprint_lossy(
     path_filter: Path | None = None,
     breaker: CircuitBreaker | None = None,
     sleep_sec: float = 1.5,
+    progress: Callable[[ProgressEvent], None] | None = None,
 ) -> dict:
     """Walk ``music_root``, Shazam-fingerprint each lossy file, apply + log.
 
@@ -213,9 +215,24 @@ def refingerprint_lossy(
         "low_confidence": 0,
     }
 
-    for path in targets:
+    total = len(targets)
+
+    def _emit(i: int, p: Path, status: str, is_error: bool = False) -> None:
+        if progress is None:
+            return
+        progress(ProgressEvent(
+            phase="refingerprint",
+            current=i,
+            total=total,
+            path=str(p),
+            message=status,
+            error=is_error,
+        ))
+
+    for i, path in enumerate(targets, start=1):
         counts["scanned"] += 1
         if not path.exists():
+            _emit(i, path, "missing")
             continue
 
         try:
@@ -230,6 +247,7 @@ def refingerprint_lossy(
                 "error": err[:200],
                 "applied": "0",
             })
+            _emit(i, path, "recognize_error", is_error=True)
             if breaker is not None:
                 tripped = breaker.record_failure(err)
                 if tripped:
@@ -252,6 +270,7 @@ def refingerprint_lossy(
                 "applied": "0",
                 "error": "shazam_no_match",
             })
+            _emit(i, path, "no_match")
             time.sleep(sleep_sec)
             continue
 
@@ -273,6 +292,7 @@ def refingerprint_lossy(
                 "storefront": match.storefront,
                 "applied": "0",
             })
+            _emit(i, path, "low_confidence")
             time.sleep(sleep_sec)
             continue
 
@@ -307,6 +327,8 @@ def refingerprint_lossy(
             "applied": "1" if applied else "0",
             "error": err,
         })
+
+        _emit(i, path, "applied" if applied else "apply_error", is_error=not applied)
 
         time.sleep(sleep_sec)
 
