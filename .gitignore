@@ -1,0 +1,109 @@
+# ─── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyo
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+.installed.cfg
+
+# ─── Virtual environments ───────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env/
+ENV/
+.python-version
+
+# ─── Test / coverage / type-check caches ────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.hypothesis/
+nosetests.xml
+coverage.xml
+
+# ─── Editors / OS / AI assistants ───────────────────────────────────────────
+.idea/
+.vscode/
+.claude/
+.cursor/
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Secrets / credentials (NEVER commit) ───────────────────────────────────
+# Apple Music DRM material — Widevine device files, cookies, Android wrapper state
+*.wvd
+*.sids
+*.pb
+*.pdat
+cookies.txt
+cookies.txt.bak
+*.cookies
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ─── musicorg generated state ───────────────────────────────────────────────
+# Runtime state lives under XDG ~/.local/share/musicorg/<slug>/ — never in repo.
+# Inside the source tree these are produced by running the pipeline against the
+# test fixture, and should not be committed.
+tests/fixtures/library-small/Music/
+tests/fixtures/library-small/_duplicates/
+tests/fixtures/library-small/_misc/
+tests/fixtures/library-small/_replaced/
+tests/fixtures/library-small/_upgrade_staging/
+tests/fixtures/library-small/**/_duplicates/
+
+# Local musicorg state if someone runs it from this directory
+.musicorg-state/
+
+# ─── Reference pipeline (entire folder is local-only) ───────────────────────
+# Original 34-script pipeline + design docs + personal run state. Kept on disk
+# for development reference but never tracked: it contains DRM material,
+# cookies, and personal music-library state.
+_organizer/
+
+# ─── Build / install artefacts ──────────────────────────────────────────────
+*.tar.gz
+*.zip
+*.tar
+*.tgz
+node_modules/
+
+# ─── Logs ───────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Local notes / scratch ──────────────────────────────────────────────────
+TODO.local
+NOTES.local
+scratch/
+tmp/

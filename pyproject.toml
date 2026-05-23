@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "musicorg"
+version = "0.1.0"
+description = "Linux terminal music organizer + canonical-metadata + lossless upgrader"
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Music Upgrader"}]
+dependencies = [
+    "mutagen>=1.47",
+    "requests>=2.31",
+    "typer>=0.12",
+    "textual>=0.60",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+shazam = ["shazamio>=0.7"]
+upgrade = []
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+musicorg = "musicorg.cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["musicorg*"]
+
+[tool.setuptools.package-data]
+"musicorg" = ["py.typed"]
