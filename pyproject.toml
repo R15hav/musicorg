@@ -53,6 +53,17 @@ cli = [
 web = []
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
+# Local-only group for building the desktop GUI from source. Intentionally
+# NOT exposed as a public `[gui]` extra — the GUI is distributed exclusively
+# via GitHub Releases (.AppImage / .exe / .dmg), never via PyPI. See
+# DISTRIBUTION.md. This group + the unlisted src/musicorg_gui/ package are
+# only consumed by the desktop build manifests and developers running
+# `python -m musicorg_gui` from a checkout.
+gui-dev = [
+    "PySide6>=6.6",
+    "platformdirs>=4",
+]
+
 [project.scripts]
 musicorg = "musicorg_cli.main:app"
 
