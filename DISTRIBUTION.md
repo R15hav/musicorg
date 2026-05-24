@@ -58,7 +58,39 @@ curl -fsSL https://raw.githubusercontent.com/R15hav/musicorg/main/install.sh | b
 - [ ] Publish each release with a GitHub Release containing a signed checksum (`install.sh.sha256`).
 - [ ] Add the curl one-liner to the README right under the install header.
 
-### 1.3 Homebrew tap (Linux + future macOS)
+### 1.3 GitHub Releases — GUI AppImage (Linux x86_64)
+
+The desktop GUI (`musicorg-gui`) ships as a single-file AppImage attached to the same GitHub Release as the library. **It is never published to PyPI.** `pip install musicorg` is and stays library-only — the GUI has Qt6 / PySide6 + bundled Python and does not belong in the wheel ecosystem.
+
+**Install path:**
+```bash
+# from the GitHub Release page, or:
+curl -fsSL -o musicorg-gui.AppImage \
+    https://github.com/R15hav/musicorg/releases/download/vX.Y.Z/musicorg-gui-vX.Y.Z-x86_64.AppImage
+chmod +x musicorg-gui.AppImage
+./musicorg-gui.AppImage
+```
+
+**Platform order (locked):** Linux AppImage is the **first** GUI distribution target. Windows `.exe` and macOS `.app` follow in that order — not in parallel, not earlier.
+
+**How it's produced.** PyInstaller assembles a one-folder bundle from `packaging/musicorg-gui.spec` (entry point `packaging/launcher.py`), which is then dropped into an AppDir built from `packaging/AppDir-template/` (AppRun, `.desktop`, SVG icon) and sealed by `appimagetool`. The full pipeline is `scripts/build_appimage.sh`, runnable locally or from CI; the GitHub Actions workflow is `.github/workflows/release-appimage.yml` (tag push → release asset; `workflow_dispatch` → artefact only).
+
+**`[gui-dev]` is a build-time extra, not a public install path.** It pulls PySide6 + pyinstaller for developers building the AppImage from source. Users are never expected to `pip install 'musicorg[gui-dev]'`.
+
+**Trade-offs.**
+- Bundle size is ~60 MB (PySide6 dominates). Acceptable for a desktop app; not great as a pipx-style install.
+- ffmpeg / mediainfo are still host dependencies — same story as the CLI. The first-run check needs to surface install hints from inside the GUI too (not just the CLI wizard).
+- AppImage assumes glibc; very old distros won't run it. The CI builder runs on `ubuntu-latest`, which sets the floor.
+
+**Action items:**
+- [x] PyInstaller spec + launcher (`packaging/musicorg-gui.spec`, `packaging/launcher.py`).
+- [x] AppDir template (`packaging/AppDir-template/`).
+- [x] Local build pipeline (`scripts/build_appimage.sh`).
+- [x] GitHub Actions release workflow (`.github/workflows/release-appimage.yml`).
+- [ ] Surface the ffprobe / mediainfo preflight inside the GUI (Welcome screen or first-run dialog), mirroring the CLI wizard's check.
+- [ ] Document the AppImage in README + docs site once the first tagged release ships.
+
+### 1.4 Homebrew tap (Linux + future macOS)
 
 Set up a tap repo (`r15hav/homebrew-musicorg`) with a single formula. Handles `ffmpeg` + `mediainfo` automatically as Homebrew deps; cross-platform if/when macOS support is added.
 
@@ -120,10 +152,11 @@ If significant Ubuntu-derived audience emerges. Maintenance is non-trivial (rebu
 |---|---|
 | **Snap** | Strict confinement breaks `~/Music` access; classic confinement requires a manual Canonical review per release. Flatpak does the same job with less friction. |
 | **Docker / OCI** | Wrong shape: musicorg mutates the user's filesystem in-place. Bind-mounting `~/Music` into a container "works" but every undo/snapshot path lands in an inconvenient namespace. |
-| **PyInstaller / Nuitka / AppImage single-binary** | Still needs `ffmpeg` + `mediainfo` on the host, so it doesn't actually solve the "no Python installed" problem. Adds 60–200 MB to download for marginal benefit over `pipx install`. Revisit only if a non-Python-installed audience emerges. |
+| **PyInstaller / Nuitka single-binary for the CLI** | Still needs `ffmpeg` + `mediainfo` on the host, so it doesn't solve the "no Python installed" problem for the CLI. Adds 60–200 MB to download for marginal benefit over `pipx install`. (Note: the *GUI* does ship via PyInstaller → AppImage — see §1.3 — because Qt6 / PySide6 makes `pip install` a worse fit for that audience. The CLI keeps the pipx-style path.) |
+| **Nuitka for the GUI** | AppImage via PyInstaller already covers the desktop distribution need. Nuitka would be a second packaging system to maintain for no clear gain. |
 | **Native `.deb` / `.rpm` in distro repos** | Years of waiting + per-distro maintenance. Flatpak + AUR cover the same audience faster. |
 | **Conda / mamba** | Audience is data scientists, not music-library users. Wrong fit. |
-| **Windows / macOS native installers** | Out of scope (Linux-only project). When/if cross-platform support lands, Homebrew (macOS) and Scoop/winget (Windows) become candidates. |
+| **Windows / macOS native installers** | Deferred, not skipped. Locked phasing: Linux AppImage ships first, then Windows `.exe`, then macOS `.app`. Homebrew (macOS) and Scoop/winget (Windows) become candidates only once those native bundles exist. |
 
 ## Release process
 
@@ -133,14 +166,17 @@ Once Tier 1 is live, a single tag triggers everything:
 $ git tag v0.3.0 && git push --tags
    │
    ├── .github/workflows/publish.yml
-   │     • pytest passes
    │     • build wheel + sdist
-   │     • upload to PyPI via Trusted Publishing
-   │     • create GitHub Release with artefacts + checksums
-   │     • dispatch repository_dispatch to homebrew-musicorg
+   │     • upload to PyPI via Trusted Publishing (library only)
    │
-   └── homebrew-musicorg/.github/workflows/bump.yml (triggered)
-         • brew bump-formula-pr opens a PR
+   ├── .github/workflows/release-appimage.yml
+   │     • install GUI build deps + Qt xcb libs
+   │     • PyInstaller → AppDir → appimagetool
+   │     • attach musicorg-gui-vX.Y.Z-x86_64.AppImage + SHA256SUMS
+   │       to the GitHub Release for the tag
+   │
+   └── homebrew-musicorg/.github/workflows/bump.yml (planned)
+         • brew bump-formula-pr opens a PR for the CLI formula
 ```
 
 ## Versioning
@@ -151,10 +187,19 @@ $ git tag v0.3.0 && git push --tags
 
 ## Concrete next steps (priority order)
 
-1. **Reserve the PyPI name `musicorg`.** (Or pick alternative.) Single highest-value action.
-2. **Write `.github/workflows/publish.yml`** for PyPI Trusted Publishing on tag push.
-3. **Refactor `install.sh` to support remote one-liner** (`curl | bash`) by cloning into `~/.local/share/musicorg-src/` when not run from inside the repo.
-4. **Add preflight check** to `musicorg_cli/wizard.py` for `ffprobe`/`mediainfo` with distro-specific install hints.
-5. **First release: `v0.2.1`** to verify the pipeline end-to-end before tagging `v0.2.0` proper.
-6. **Homebrew tap repo** — second wave after PyPI is confirmed working.
-7. **AUR + Flatpak** — Tier 2, after public API has stabilised (v1.0).
+Done:
+- [x] **PyPI publishing workflow** — `.github/workflows/publish.yml` (Trusted Publishing on tag push, with TestPyPI via `workflow_dispatch`).
+- [x] **`install.sh` for Linux** — detects distro, installs system deps, sets up venv, optionally launches the wizard. Remote one-liner refactor is still pending (see below).
+- [x] **GUI AppImage local build pipeline** — `scripts/build_appimage.sh`, `packaging/musicorg-gui.spec`, `packaging/launcher.py`, `packaging/AppDir-template/`. Verified locally producing a 63 MB AppImage that launches.
+- [x] **GUI AppImage release workflow** — `.github/workflows/release-appimage.yml` attaches the AppImage + `SHA256SUMS` to the GitHub Release on tag push.
+- [x] **Docs site workflow** — `.github/workflows/docs.yml` builds + deploys MkDocs to GitHub Pages.
+
+Outstanding:
+1. **Reserve the PyPI name `musicorg`.** (Or pick alternative.) Still the single highest-value action — without this the publish workflow has nothing to publish to.
+2. **Refactor `install.sh` for remote `curl | bash`** — clone into `~/.local/share/musicorg-src/` when not run from inside the repo, accept a `--version` flag.
+3. **Preflight check** for `ffprobe`/`mediainfo` in both the CLI wizard *and* the GUI Welcome screen, with distro-specific install hints.
+4. **First release: `v0.2.1`** to verify both pipelines end-to-end (PyPI wheel + GitHub Release AppImage from a single tag push) before tagging `v0.2.0` proper.
+5. **Homebrew tap repo** — second wave after PyPI is confirmed working.
+6. **Windows `.exe` GUI build** — second GUI platform per the locked phasing. Reuses the same PyInstaller spec; adds a parallel job/workflow on `windows-latest`.
+7. **macOS `.app` GUI build** — third GUI platform. `runs-on: macos-latest`, plus codesigning/notarisation friction.
+8. **AUR + Flatpak** — Tier 2, after public API has stabilised (v1.0).

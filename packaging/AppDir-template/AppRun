@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# AppImage entrypoint. Resolves the AppDir, sets a few sane env vars,
+# then hands off to the PyInstaller-bundled musicorg-gui binary.
+#
+# AppImage runtime sets $APPDIR for us; outside it (when running
+# AppDir/AppRun directly during local testing) we resolve from $0.
+
+set -e
+
+HERE="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+
+# PySide6's Qt plugins live next to the executable in PyInstaller's
+# _internal/PySide6/Qt/plugins/ layout. PyInstaller's bootloader handles
+# QT_PLUGIN_PATH internally for the bundled Qt — no extra config needed.
+
+# musicorg writes state under $XDG_DATA_HOME (Linux). The bootstrap
+# downloads ffprobe/mediainfo into $XDG_CACHE_HOME on first run. We
+# don't need to override either.
+
+exec "$HERE/usr/bin/musicorg-gui" "$@"

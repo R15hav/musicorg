@@ -63,6 +63,7 @@ docs = ["mkdocs-material>=9", "pymdown-extensions>=10"]
 gui-dev = [
     "PySide6>=6.6",
     "platformdirs>=4",
+    "pyinstaller>=6.10",
 ]
 
 [project.scripts]

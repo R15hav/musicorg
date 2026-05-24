@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=musicorg
+GenericName=Music Library Organizer
+Comment=Organize a messy music library: scan, dedupe, plan, apply with undo
+Exec=musicorg-gui %F
+Icon=musicorg
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+Keywords=music;library;organizer;tags;id3;metadata;alac;lossless;
+StartupNotify=true

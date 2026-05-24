@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1565c0"/>
+      <stop offset="1" stop-color="#0d47a1"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="44" fill="url(#bg)"/>
+  <!-- Stylised vinyl/disc -->
+  <circle cx="128" cy="128" r="76" fill="#0d2c54" stroke="#ffffff" stroke-width="3" stroke-opacity="0.4"/>
+  <circle cx="128" cy="128" r="60" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.3"/>
+  <circle cx="128" cy="128" r="44" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.25"/>
+  <circle cx="128" cy="128" r="22" fill="#ffffff"/>
+  <circle cx="128" cy="128" r="6" fill="#0d2c54"/>
+  <!-- Note glyph -->
+  <g transform="translate(146,84)">
+    <rect x="0" y="0" width="6" height="48" fill="#ffffff"/>
+    <ellipse cx="-7" cy="50" rx="13" ry="9" fill="#ffffff"/>
+    <path d="M6,0 C26,4 32,20 30,30 L24,24 C26,16 18,10 6,8 Z" fill="#ffffff"/>
+  </g>
+</svg>

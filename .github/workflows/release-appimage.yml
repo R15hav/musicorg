@@ -1,0 +1,124 @@
+name: release-appimage
+
+# Builds the Linux x86_64 AppImage for the musicorg GUI and, on a tag push,
+# attaches it to the matching GitHub Release.
+#
+# Triggers:
+#   - push of a tag matching v*  → builds AppImage, uploads as Release asset
+#                                  on the existing release for that tag.
+#                                  (publish.yml handles the PyPI wheel for the
+#                                  library on the same tag — this workflow is
+#                                  strictly about the desktop GUI artefact.)
+#   - workflow_dispatch          → builds AppImage with version "dev", leaves
+#                                  it as a workflow artefact only. For manual
+#                                  smoke-testing of the pipeline.
+#
+# Artefacts produced:
+#   - dist/musicorg-gui-<version>-x86_64.AppImage
+#   - dist/musicorg-gui-<version>-x86_64.AppImage.sha256
+#   - dist/SHA256SUMS               (aggregate of all .sha256 files)
+#
+# The GUI is intentionally never published to PyPI — only via GitHub Releases.
+# See DISTRIBUTION.md for the rationale.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # required for softprops/action-gh-release to attach assets
+
+jobs:
+  build:
+    name: build AppImage (linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Qt6 / PySide6 platform plugin pulls in a fair set of xcb libs even
+      # at PyInstaller analysis time. libfuse2 is kept defensively in case
+      # appimagetool ever falls back off --appimage-extract-and-run.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfuse2 \
+            libxkbcommon0 \
+            libegl1 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xfixes0 \
+            libxcb-xkb1
+
+      # Cache the appimagetool download. build_appimage.sh stores it under
+      # $XDG_CACHE_HOME/musicorg-appimage-tools/ which defaults to ~/.cache/.
+      - name: Cache appimagetool
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/musicorg-appimage-tools
+          key: appimagetool-continuous-v1
+
+      - name: Create venv and install GUI build extras
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install '.[gui-dev]'
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
+            echo "value=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build AppImage
+        run: scripts/build_appimage.sh "${{ steps.version.outputs.value }}"
+
+      # Merge the per-file .sha256 sidecars into a single SHA256SUMS file
+      # suitable for `sha256sum -c SHA256SUMS` after download.
+      - name: Aggregate checksums
+        run: |
+          cd dist
+          : > SHA256SUMS
+          for f in *.AppImage.sha256; do
+            [[ -e "$f" ]] || continue
+            cat "$f" >> SHA256SUMS
+          done
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+
+      - name: Upload workflow artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: musicorg-gui-appimage-${{ steps.version.outputs.value }}
+          path: |
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Attach AppImage to GitHub Release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
