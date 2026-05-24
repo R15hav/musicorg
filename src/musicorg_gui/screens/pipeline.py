@@ -71,9 +71,10 @@ from ..workers.canonicalize_worker import CustomOrderCanonicalizeWorker
 
 _PHASES: list[tuple[str, str]] = [
     ("scan", "Scan"),
+    ("dedupe", "Dedupe"),         # initial pass on original tags
     ("metadata", "Metadata"),
-    ("dedupe", "Dedupe"),
-    ("plan", "Plan"),  # internally: resolve + plan
+    ("recheck", "Re-check"),      # rescan + dedupe pass 2 on canonical tags
+    ("plan", "Plan"),              # internally: resolve + plan
     ("execute", "Apply"),
 ]
 
@@ -1052,6 +1053,20 @@ class PipelineScreen(QWidget):
     @Slot(object)
     def _on_scan_done(self, _tracks: object) -> None:
         self._strip.set_status("scan", "done")
+        self._run_dedupe_initial()
+
+    # ---- dedupe pass 1 (initial, on original tags) ------------------------
+    def _run_dedupe_initial(self) -> None:
+        assert self._cfg
+        self._strip.set_status("dedupe", "running")
+        self._running_pane.set_phase("dedupe")
+        self._running_pane.headline.setText("Finding duplicate audio files…")
+        self._show_running_pane()
+        self._attach(DedupeWorker(self._cfg, parent=self), self._on_dedupe_initial_done)
+
+    @Slot(object)
+    def _on_dedupe_initial_done(self, _outcome: DedupeOutcome) -> None:
+        self._strip.set_status("dedupe", "done")
         self._run_canonicalize()
 
     # ---- metadata: lookup + review + apply --------------------------------
@@ -1079,7 +1094,7 @@ class PipelineScreen(QWidget):
         if actionable == 0:
             # Empty library or every row was no_match — nothing to tag/rename.
             self._strip.set_status("metadata", "done")
-            self._run_dedupe()
+            self._run_recheck()
             return
 
         # Populate the pane (which separates auto_apply rows from cards).
@@ -1090,7 +1105,7 @@ class PipelineScreen(QWidget):
             picks = self._metadata_review_pane.picks()
             if not picks:
                 self._strip.set_status("metadata", "done")
-                self._run_dedupe()
+                self._run_recheck()
                 return
             self._write_approvals_and_apply(picks)
             return
@@ -1110,10 +1125,11 @@ class PipelineScreen(QWidget):
     def _on_metadata_save(self) -> None:
         picks = self._metadata_review_pane.picks()
         if not picks:
-            # Every row skipped — nothing to apply. Advance straight to dedupe.
+            # Every row skipped — nothing to apply. Re-scan + dedupe anyway
+            # so the rest of the pipeline sees a consistent state.
             self._strip.set_status("metadata", "done")
             self._show_running_pane()
-            self._run_dedupe()
+            self._run_recheck()
             return
         self._write_approvals_and_apply(picks)
 
@@ -1133,20 +1149,38 @@ class PipelineScreen(QWidget):
     @Slot(object)
     def _on_apply_metadata_done(self, _result: ApplyResult) -> None:
         self._strip.set_status("metadata", "done")
-        self._run_dedupe()
+        self._run_recheck()
 
-    # ---- dedupe ---------------------------------------------------------
-    def _run_dedupe(self) -> None:
-        assert self._cfg
-        self._strip.set_status("dedupe", "running")
-        self._running_pane.set_phase("dedupe")
-        self._running_pane.headline.setText("Finding duplicate audio files…")
+    # ---- recheck: rescan + dedupe pass 2 on canonical tags ----------------
+    #
+    # apply_approvals just rewrote tags on disk. ``01_tags.csv`` is now
+    # stale. Re-scan to refresh it, then re-run dedupe so it sees the
+    # canonical title/artist tuples. A song that was unique under its
+    # original tags may now cluster with another song that previously
+    # had different tags — exactly the case the second pass catches.
+
+    def _run_recheck(self) -> None:
+        """Step 1 of the re-check phase: re-scan to refresh tag CSV."""
+        assert self._cfg and self._root is not None
+        self._strip.set_status("recheck", "running")
+        self._running_pane.set_phase("recheck")
+        self._running_pane.headline.setText(
+            "Re-reading tags after metadata changes…"
+        )
         self._show_running_pane()
-        self._attach(DedupeWorker(self._cfg, parent=self), self._on_dedupe_done)
+        self._attach(ScanWorker(self._cfg, self._root, parent=self), self._on_recheck_rescan_done)
 
     @Slot(object)
-    def _on_dedupe_done(self, _outcome: DedupeOutcome) -> None:
-        self._strip.set_status("dedupe", "done")
+    def _on_recheck_rescan_done(self, _tracks: object) -> None:
+        """Step 2 of the re-check phase: re-run dedupe on the fresh CSV."""
+        self._running_pane.headline.setText(
+            "Re-checking for duplicates revealed by canonical metadata…"
+        )
+        self._attach(DedupeWorker(self._cfg, parent=self), self._on_recheck_dedupe_done)
+
+    @Slot(object)
+    def _on_recheck_dedupe_done(self, _outcome: DedupeOutcome) -> None:
+        self._strip.set_status("recheck", "done")
         self._run_resolve()
 
     # ---- resolve (internally folds into the "plan" user-facing pill) -----
