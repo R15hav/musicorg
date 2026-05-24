@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 from musicorg import ApplyResult, Config, ProgressEvent
 
+from .. import theme as t
 from ..widgets import Banner, Pill, StatTile, StatusPanel
 from ..workers import (
     ApplyApprovalsWorker,
@@ -180,15 +181,181 @@ class _RunningPane(QWidget):
                 self._banner.setVisible(False)
 
 
-class _ReviewCard(QFrame):
-    """One row of the metadata review queue with inline Approve / Skip buttons.
+_TIER_LABELS: dict[str, str] = {
+    "jiosaavn": "JioSaavn",
+    "itunes": "iTunes",
+    "shazam": "Shazam",
+}
 
-    Adapted from ``screens.metadata._ReviewCard`` — same per-card pick
-    state machine. ``pick`` is one of ``""`` (undecided), ``"itunes"``
-    (approve), or ``"skip"``. We keep ``"itunes"`` as the approve value
-    regardless of which tier actually won the row because the merged-CSV
-    writer mirrors the winning tier's data into the ``api_*`` columns, so
-    a ``pick="itunes"`` approval correctly drives ``apply_approvals``.
+
+def tier_fields(row: dict, tier: str) -> dict[str, str]:
+    """Extract title / artist / album / year for ``tier`` from a merged row.
+
+    Used by both the card UI (to render a tier's data) and by
+    :meth:`_MetadataReviewPane.picks` (to build approval entries with
+    ``pick="manual"`` carrying the chosen tier's data, regardless of
+    which tier actually won the chain).
+    """
+    if tier == "jiosaavn":
+        return {
+            "title":  (row.get("jio_title") or "").strip(),
+            "artist": (row.get("jio_artist") or "").strip(),
+            "album":  (row.get("jio_album") or "").strip(),
+            "year":   (row.get("jio_year") or "").strip(),
+        }
+    if tier == "itunes":
+        # Prefer the dedicated itunes_* columns so we get iTunes data even
+        # when iTunes lost the cascade. Fall back to api_* (which mirrors
+        # the winning tier) for older merged CSVs without itunes_*.
+        return {
+            "title":  (row.get("itunes_title") or row.get("api_title") or "").strip(),
+            "artist": (row.get("itunes_artist") or row.get("api_artist") or "").strip(),
+            "album":  (row.get("itunes_album") or row.get("api_album") or "").strip(),
+            "year":   (row.get("itunes_year") or row.get("api_year") or "").strip(),
+        }
+    if tier == "shazam":
+        return {
+            "title":  (row.get("shazam_title") or "").strip(),
+            "artist": (row.get("shazam_artist") or "").strip(),
+            "album":  (row.get("shazam_album") or "").strip(),
+            "year":   (row.get("shazam_year") or "").strip(),
+        }
+    # "current" — for completeness only; never used as a pick.
+    if tier == "current":
+        return {
+            "title":  (row.get("cur_title") or "").strip(),
+            "artist": (row.get("cur_artist") or "").strip(),
+            "album":  (row.get("cur_album") or "").strip(),
+            "year":   (row.get("cur_year") or "").strip(),
+        }
+    # Winner-mirror (for auto_apply rows).
+    return {
+        "title":  (row.get("api_title") or "").strip(),
+        "artist": (row.get("api_artist") or "").strip(),
+        "album":  (row.get("api_album") or "").strip(),
+        "year":   (row.get("api_year") or "").strip(),
+    }
+
+
+class _TierCard(QFrame):
+    """One selectable tier card inside a review row.
+
+    Tier = ``current`` | ``jiosaavn`` | ``itunes`` | ``shazam``. The
+    "current" tier is informational only; it can't be selected as a
+    pick. Selecting any other card emits ``selected`` carrying the tier
+    name. The selected state is reflected via a 2 px primary halo per
+    the brief's "Tier-suggestion card · 4-up" component.
+    """
+
+    selected = Signal(str)
+
+    def __init__(
+        self,
+        tier: str,
+        title: str,
+        fields: dict[str, str],
+        *,
+        confidence: float | None = None,
+        is_winner: bool = False,
+        selectable: bool = True,
+        parent: Any = None,
+    ) -> None:
+        super().__init__(parent)
+        self._tier = tier
+        self._selectable = selectable
+        self._is_selected = False
+        self.setFixedWidth(220)
+        if selectable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._apply_frame_style()
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 10, 12, 12)
+        outer.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        header.setContentsMargins(0, 0, 0, 0)
+
+        head_label = QLabel(title.upper())
+        head_label.setProperty("class", "footnote")
+        header.addWidget(head_label)
+
+        if is_winner:
+            winner_dot = QLabel("●")
+            winner_dot.setStyleSheet(
+                f"QLabel {{ color: {t.PRIMARY_500}; background: transparent;"
+                f" border: none; padding: 0; font-size: 10px; }}"
+            )
+            winner_dot.setToolTip("Top match from the lookup cascade")
+            header.addWidget(winner_dot)
+        header.addStretch(1)
+        outer.addLayout(header)
+
+        for k in ("title", "artist", "album", "year"):
+            label_text = (fields.get(k) or "—")
+            label = QLabel(label_text)
+            label.setWordWrap(True)
+            label.setStyleSheet(
+                f"QLabel {{ font-family: {t.SANS}; font-size: 12px;"
+                f" color: {t.TEXT_HIGH}; background: transparent;"
+                f" border: none; padding: 0; }}"
+            )
+            outer.addWidget(label)
+
+        if confidence is not None and confidence > 0:
+            conf_label = QLabel(f"conf {confidence:.2f}")
+            conf_label.setProperty("class", "caption")
+            outer.addSpacing(2)
+            outer.addWidget(conf_label)
+
+    def set_selected(self, selected: bool) -> None:
+        if not self._selectable:
+            return
+        self._is_selected = selected
+        self._apply_frame_style()
+
+    @property
+    def tier(self) -> str:
+        return self._tier
+
+    def _apply_frame_style(self) -> None:
+        # Selected halo per the design brief — 2 px primary border
+        # plus a subtle outer ring via larger border-radius padding.
+        if self._is_selected:
+            self.setStyleSheet(
+                f"QFrame {{ background: {t.SURFACE_PAPER};"
+                f" border: 2px solid {t.PRIMARY_500};"
+                f" border-radius: 10px; }}"
+            )
+        else:
+            self.setStyleSheet(
+                f"QFrame {{ background: {t.SURFACE_PAPER};"
+                f" border: 1px solid {t.BORDER_LIGHT};"
+                f" border-radius: 10px; }}"
+            )
+
+    def mousePressEvent(self, event: Any) -> None:  # noqa: N802 — Qt override
+        if self._selectable and event.button() == Qt.MouseButton.LeftButton:
+            self.selected.emit(self._tier)
+        super().mousePressEvent(event)
+
+
+class _ReviewCard(QFrame):
+    """One row of the metadata review queue.
+
+    Layout: header (decision pill + confidence + filename) → horizontal
+    row of tier cards (Current + every tier that returned a match) →
+    action row (Skip + status hint). The user clicks one of the tier
+    cards to set the pick; the picked card gets a yellow halo. Click a
+    different tier card to switch the pick. The Skip button explicitly
+    declines all tiers for this row.
+
+    Pick values:
+      - ``""`` — undecided (must be resolved before Save)
+      - ``"jiosaavn"`` | ``"itunes"`` | ``"shazam"`` — that tier's data
+        will be applied
+      - ``"skip"`` — no tag write for this file
     """
 
     decision_changed = Signal()  # emitted when the user changes pick
@@ -196,15 +363,16 @@ class _ReviewCard(QFrame):
     def __init__(self, row: dict, parent: Any = None) -> None:
         super().__init__(parent)
         self._row = row
-        self._pick: str | None = self._default_pick()
+        self._pick: str = self._default_pick()
+        self._tier_cards: dict[str, _TierCard] = {}
 
         self.setProperty("surface", "paper")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 14, 18, 14)
-        outer.setSpacing(8)
+        outer.setSpacing(10)
 
-        # Header — decision pill + path
+        # Header — decision pill + confidence + filename
         header = QHBoxLayout()
         header.setSpacing(10)
 
@@ -229,88 +397,124 @@ class _ReviewCard(QFrame):
         header.addStretch(1)
         outer.addLayout(header)
 
-        # Current vs Match — two-column row
-        two = QHBoxLayout()
-        two.setSpacing(24)
-        two.addLayout(self._side_block("Current", row, "cur_"), 1)
-        two.addLayout(self._side_block("Match", row, "api_"), 1)
-        outer.addLayout(two)
+        # Tier-card row — Current is always shown; jiosaavn / itunes /
+        # shazam show only when their tier returned data for this file.
+        tiers_row = QHBoxLayout()
+        tiers_row.setSpacing(10)
+        tiers_row.setContentsMargins(0, 0, 0, 0)
 
-        # Action row
+        # Current — informational only.
+        current_card = _TierCard(
+            "current", "Current", tier_fields(row, "current"), selectable=False
+        )
+        tiers_row.addWidget(current_card)
+
+        winner = (row.get("winning_tier") or "").lower()
+        per_tier_conf: dict[str, float] = {}
+        for tier in ("jiosaavn", "itunes", "shazam"):
+            tier_data = tier_fields(row, tier)
+            if not any(tier_data.values()):
+                continue  # No data for this tier on this row.
+            raw_conf = row.get(f"{tier.replace('jiosaavn','jio').replace('itunes','itunes').replace('shazam','shazam')}_confidence")
+            # Fall back to overall confidence when the tier-specific value
+            # is missing (older merged CSVs).
+            try:
+                conf_value = float(raw_conf) if raw_conf not in (None, "") else (confidence if tier == winner else 0.0)
+            except (TypeError, ValueError):
+                conf_value = 0.0
+            per_tier_conf[tier] = conf_value
+            card = _TierCard(
+                tier,
+                _TIER_LABELS[tier],
+                tier_data,
+                confidence=conf_value,
+                is_winner=(tier == winner),
+            )
+            card.selected.connect(self._on_tier_clicked)
+            tiers_row.addWidget(card)
+            self._tier_cards[tier] = card
+
+        tiers_row.addStretch(1)
+        outer.addLayout(tiers_row)
+
+        # Action row — Skip button + status hint
         actions = QHBoxLayout()
+        actions.setContentsMargins(0, 4, 0, 0)
+
+        self._hint = QLabel("")
+        self._hint.setProperty("class", "caption")
+        actions.addWidget(self._hint)
         actions.addStretch(1)
-        self._approve_btn = QPushButton("Approve")
-        self._skip_btn = QPushButton("Skip")
-        for btn, value in ((self._approve_btn, "itunes"), (self._skip_btn, "skip")):
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda _checked=False, v=value: self._set_pick(v))
-            actions.addWidget(btn)
+
+        self._skip_btn = QPushButton("Skip this file")
+        self._skip_btn.setCheckable(True)
+        self._skip_btn.clicked.connect(self._on_skip_clicked)
+        actions.addWidget(self._skip_btn)
         outer.addLayout(actions)
-        self._apply_pick_to_buttons()
+
+        # Reflect the default pick visually.
+        self._reflect_pick()
 
     def _default_pick(self) -> str:
         decision = (self._row.get("decision") or "").lower()
-        if decision == "auto_apply":
-            return "itunes"  # api_* fields carry the chain winner's data
+        winner = (self._row.get("winning_tier") or "").lower()
         if decision == "no_match":
             return "skip"
-        return ""  # review / low — undecided until the user clicks
+        # For review / low rows: pre-select the winning tier so the user
+        # can simply Save if they agree with the cascade. They can still
+        # click any other tier or Skip.
+        if winner in ("jiosaavn", "itunes", "shazam"):
+            return winner
+        return ""
 
-    def _side_block(self, title: str, row: dict, prefix: str) -> QVBoxLayout:
-        layout = QVBoxLayout()
-        layout.setSpacing(4)
-
-        head = QLabel(title.upper())
-        head.setProperty("class", "footnote")
-        layout.addWidget(head)
-
-        title_val = (row.get(f"{prefix}title") or "").strip() or "—"
-        artist_val = (row.get(f"{prefix}artist") or "").strip() or "—"
-        album_val = (row.get(f"{prefix}album") or "").strip() or "—"
-        year_val = (row.get(f"{prefix}year") or "").strip()
-        album_year = f"{album_val}{f' ({year_val})' if year_val else ''}"
-
-        for field_label, text in (
-            ("Title", title_val),
-            ("Artist", artist_val),
-            ("Album", album_year),
-        ):
-            cap = QLabel(field_label)
-            cap.setProperty("class", "caption")
-            layout.addWidget(cap)
-            value = QLabel(text)
-            value.setProperty("class", "body")
-            value.setWordWrap(True)
-            layout.addWidget(value)
-        return layout
-
-    def _set_pick(self, value: str) -> None:
-        self._pick = value
-        self._apply_pick_to_buttons()
+    def _on_tier_clicked(self, tier: str) -> None:
+        self._pick = tier
+        self._reflect_pick()
         self.decision_changed.emit()
 
-    def _apply_pick_to_buttons(self) -> None:
-        approved = self._pick == "itunes"
+    def _on_skip_clicked(self) -> None:
+        # Toggle skip on/off — clicking again clears skip and reverts
+        # to undecided (or the default winner pick).
+        if self._pick == "skip":
+            self._pick = self._default_pick() if self._default_pick() != "skip" else ""
+        else:
+            self._pick = "skip"
+        self._reflect_pick()
+        self.decision_changed.emit()
+
+    def _reflect_pick(self) -> None:
+        # Update tier-card haloes.
+        for tier, card in self._tier_cards.items():
+            card.set_selected(tier == self._pick)
+
+        # Skip button visual state.
         skipped = self._pick == "skip"
-        self._approve_btn.setChecked(approved)
         self._skip_btn.setChecked(skipped)
-
-        self._approve_btn.setProperty("variant", "primary" if approved else None)
-        self._approve_btn.style().unpolish(self._approve_btn)
-        self._approve_btn.style().polish(self._approve_btn)
-
-        self._skip_btn.setProperty("variant", None)
+        self._skip_btn.setProperty("variant", "danger" if skipped else None)
         self._skip_btn.style().unpolish(self._skip_btn)
         self._skip_btn.style().polish(self._skip_btn)
+        self._skip_btn.setText("Skipped — click to undo" if skipped else "Skip this file")
+
+        # Hint text reflects state.
+        if self._pick == "":
+            self._hint.setText("Pick a tier or skip this file.")
+        elif self._pick == "skip":
+            self._hint.setText("This file will not be re-tagged.")
+        else:
+            self._hint.setText(f"Will apply {_TIER_LABELS.get(self._pick, self._pick)} match.")
 
     @property
     def pick(self) -> str:
-        """One of '', 'itunes', 'skip'. Empty = undecided."""
-        return self._pick or ""
+        """One of ``""`` / ``"jiosaavn"`` / ``"itunes"`` / ``"shazam"`` / ``"skip"``."""
+        return self._pick
 
     @property
     def source_path(self) -> str:
         return self._row.get("source_path", "")
+
+    @property
+    def row(self) -> dict:
+        return self._row
 
 
 class _MetadataReviewPane(QWidget):
@@ -329,39 +533,45 @@ class _MetadataReviewPane(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
+        self._layout = layout
 
         title = QLabel("Review metadata")
         title.setProperty("class", "h2")
         layout.addWidget(title)
 
         caption = QLabel(
-            "Auto-apply matches are pre-approved; no-match rows are pre-skipped; "
-            "review / low rows wait for your decision."
+            "These rows didn't auto-resolve. Pick a tier per file (JioSaavn, "
+            "iTunes, or Shazam), or skip files you don't want re-tagged."
         )
         caption.setWordWrap(True)
         caption.setProperty("class", "muted")
         layout.addWidget(caption)
 
-        # StatTile row: Total · Auto-approved · Needs review.
+        # StatTile row: Total · Auto-approved (hidden, applied) · Needs review.
         tiles_row = QHBoxLayout()
         tiles_row.setSpacing(12)
         self._tile_total = StatTile("0", "Total")
         self._tile_auto = StatTile("0", "Auto-approved")
-        self._tile_review = StatTile("0", "Needs review")
+        self._tile_review = StatTile("0", "Awaiting your call")
         for tile in (self._tile_total, self._tile_auto, self._tile_review):
             tiles_row.addWidget(tile, 1)
         layout.addLayout(tiles_row)
 
-        # Bulk action row.
+        # Bulk action row — operate on the visible (needs-review) cards.
         bulk = QHBoxLayout()
         bulk.addStretch(1)
-        self._approve_all = QPushButton("Approve all matches")
+        self._approve_all = QPushButton("Take all top matches")
         self._approve_all.clicked.connect(self._on_approve_all)
         bulk.addWidget(self._approve_all)
         self._skip_all = QPushButton("Skip all")
         self._skip_all.clicked.connect(self._on_skip_all)
         bulk.addWidget(self._skip_all)
         layout.addLayout(bulk)
+
+        # Inline error banner slot — populated only when the user clicks
+        # Save with undecided rows. Hidden by default.
+        self._error_banner: Banner | None = None
+        self._error_slot_index = layout.count()
 
         # Scrollable card list.
         scroll = QScrollArea()
@@ -386,14 +596,16 @@ class _MetadataReviewPane(QWidget):
         actions.addWidget(self._cancel_btn)
         self._save_btn = QPushButton("Save & apply →")
         self._save_btn.setProperty("variant", "commit")
-        self._save_btn.clicked.connect(self.save_clicked)
+        self._save_btn.clicked.connect(self._on_save_clicked)
         actions.addWidget(self._save_btn)
         layout.addLayout(actions)
 
         self._cards: list[_ReviewCard] = []
+        self._auto_apply_rows: list[dict] = []
 
     def populate(self, rows: list[dict], bucket_counts: dict[str, int]) -> None:
-        # Clear existing cards.
+        # Clear existing cards and any error banner.
+        self._clear_error_banner()
         while self._cards_layout.count():
             item = self._cards_layout.takeAt(0)
             w = item.widget() if item else None
@@ -401,57 +613,139 @@ class _MetadataReviewPane(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         self._cards.clear()
+        self._auto_apply_rows = []
 
         total = sum(bucket_counts.values())
         auto = bucket_counts.get("auto_apply", 0)
-        review = bucket_counts.get("review", 0) + bucket_counts.get("low", 0)
+        review_count = bucket_counts.get("review", 0) + bucket_counts.get("low", 0) + bucket_counts.get("no_match", 0)
         self._tile_total.set_value(total)
         self._tile_auto.set_value(auto)
-        self._tile_review.set_value(review)
+        self._tile_review.set_value(review_count)
 
-        # Order review > low > auto_apply > no_match so attention-needed rows top the list.
-        priority = {"review": 0, "low": 1, "auto_apply": 2, "no_match": 3}
-        ordered = sorted(rows, key=lambda r: priority.get((r.get("decision") or "").lower(), 9))
-        for row in ordered:
+        # Filter: only render rows the user needs to make a call on.
+        # Auto-apply rows are remembered separately so picks() includes them
+        # but they don't clutter the review queue.
+        priority = {"review": 0, "low": 1, "no_match": 2}
+        review_rows = []
+        for row in rows:
+            decision = (row.get("decision") or "").lower()
+            if decision == "auto_apply":
+                self._auto_apply_rows.append(row)
+                continue
+            review_rows.append(row)
+        review_rows.sort(key=lambda r: priority.get((r.get("decision") or "").lower(), 9))
+
+        for row in review_rows:
             card = _ReviewCard(row)
-            card.decision_changed.connect(self._update_progress_caption)
+            card.decision_changed.connect(self._on_card_decision_changed)
             self._cards_layout.addWidget(card)
             self._cards.append(card)
         self._cards_layout.addStretch(1)
         self._update_progress_caption()
 
     def picks(self) -> list[dict]:
-        """Build the approvals list — entries for any non-skip / non-empty pick."""
+        """Build the approvals list.
+
+        Every entry uses ``pick="manual"`` with ``manual_fields`` carrying
+        the chosen tier's title/artist/album/year. This sidesteps
+        ``apply_approvals``'s tier-extraction logic so the user gets
+        exactly what they picked regardless of which columns the library
+        normally reads. Auto-apply rows are included automatically.
+        """
         out: list[dict] = []
+
+        # Auto-apply rows: use the api_* winner-mirror data.
+        for row in self._auto_apply_rows:
+            fields = tier_fields(row, "winner")
+            if not fields["title"]:
+                continue
+            out.append({
+                "source_path": row.get("source_path", ""),
+                "pick": "manual",
+                "manual_fields": fields,
+            })
+
+        # User-decided rows.
         for card in self._cards:
             pick = card.pick
             if pick in ("", "skip"):
                 continue
-            out.append({"source_path": card.source_path, "pick": pick})
+            fields = tier_fields(card.row, pick)
+            if not fields["title"]:
+                continue
+            out.append({
+                "source_path": card.source_path,
+                "pick": "manual",
+                "manual_fields": fields,
+            })
         return out
 
     @property
     def has_pending_decisions(self) -> bool:
         return any(c.pick == "" for c in self._cards)
 
+    @Slot()
+    def _on_save_clicked(self) -> None:
+        """Validate then forward to save_clicked. Inline error if undecided."""
+        if self.has_pending_decisions:
+            pending = sum(1 for c in self._cards if c.pick == "")
+            self._show_error_banner(
+                title="Undecided rows",
+                body=(
+                    f"{pending} file{'s' if pending != 1 else ''} still need a "
+                    "decision. Click a tier card to approve that match, or click "
+                    "Skip on the row to leave the file's tags as they are."
+                ),
+            )
+            return
+        self._clear_error_banner()
+        self.save_clicked.emit()
+
+    def _show_error_banner(self, *, title: str, body: str) -> None:
+        new_banner = Banner(severity="error", title=title, body=body)
+        if self._error_banner is not None:
+            self._layout.replaceWidget(self._error_banner, new_banner)
+            self._error_banner.deleteLater()
+        else:
+            self._layout.insertWidget(self._error_slot_index, new_banner)
+        self._error_banner = new_banner
+
+    def _clear_error_banner(self) -> None:
+        if self._error_banner is not None:
+            self._error_banner.deleteLater()
+            self._error_banner = None
+
+    def _on_card_decision_changed(self) -> None:
+        # User made a decision; drop any stale error banner.
+        self._clear_error_banner()
+        self._update_progress_caption()
+
     def _on_approve_all(self) -> None:
+        # "Top match" = the winning_tier recorded by the worker, or the
+        # first available tier if there's no winner.
         for card in self._cards:
-            card._set_pick("itunes")
+            winner = (card.row.get("winning_tier") or "").lower()
+            if winner in card._tier_cards:
+                card._on_tier_clicked(winner)
+            elif card._tier_cards:
+                first_tier = next(iter(card._tier_cards.keys()))
+                card._on_tier_clicked(first_tier)
+            else:
+                card._on_skip_clicked()  # No tiers available; nothing to approve.
 
     def _on_skip_all(self) -> None:
         for card in self._cards:
-            card._set_pick("skip")
+            if card.pick != "skip":
+                card._on_skip_clicked()
 
     def _update_progress_caption(self) -> None:
         total = len(self._cards)
-        approved = sum(1 for c in self._cards if c.pick == "itunes")
+        approved = sum(1 for c in self._cards if c.pick in ("jiosaavn", "itunes", "shazam"))
         skipped = sum(1 for c in self._cards if c.pick == "skip")
         pending = total - approved - skipped
         self._progress_caption.setText(
             f"{approved} approved · {skipped} skipped · {pending} undecided"
         )
-        # Save enabled iff no row is still undecided.
-        self._save_btn.setEnabled(pending == 0)
 
 
 class _PreviewPane(QWidget):
@@ -781,22 +1075,19 @@ class PipelineScreen(QWidget):
         rows = self._read_merged_csv()
 
         actionable = stats.get("auto_apply", 0) + stats.get("review", 0) + stats.get("low", 0)
-        review_pending = stats.get("review", 0) + stats.get("low", 0)
 
         if actionable == 0:
             # Empty library or every row was no_match — nothing to tag/rename.
-            # Skip the review pane and the apply worker entirely; move on to dedupe.
             self._strip.set_status("metadata", "done")
             self._run_dedupe()
             return
 
-        if review_pending == 0:
-            # Everything resolved to auto_apply or no_match — auto-build approvals
-            # from auto_apply rows and apply without showing the review pane.
-            picks = [
-                {"source_path": r.get("source_path", ""), "pick": "itunes"}
-                for r in rows if (r.get("decision") or "").lower() == "auto_apply"
-            ]
+        # Populate the pane (which separates auto_apply rows from cards).
+        self._metadata_review_pane.populate(rows, stats)
+
+        # No cards to show? Fast-path: apply auto-approvals immediately.
+        if not self._metadata_review_pane._cards:
+            picks = self._metadata_review_pane.picks()
             if not picks:
                 self._strip.set_status("metadata", "done")
                 self._run_dedupe()
@@ -805,7 +1096,6 @@ class PipelineScreen(QWidget):
             return
 
         # User review needed.
-        self._metadata_review_pane.populate(rows, stats)
         self._show_metadata_review_pane()
 
     def _read_merged_csv(self) -> list[dict]:

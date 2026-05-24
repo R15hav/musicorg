@@ -39,6 +39,23 @@ from musicorg.clean import parse_folder, title_from_filename
 # musicorg.canonicalize._MERGED_FIELDS — same list, same order.
 from musicorg.canonicalize import _MERGED_FIELDS  # noqa: PLC2701  (private import)
 
+# Extra columns the custom-order worker writes on top of the canonical schema.
+# These let the review UI display every tier that returned a match — not just
+# the winner — without losing data when a non-winning tier is later picked.
+# ``apply_approvals`` ignores unknown columns (DictReader is field-tolerant)
+# so adding these is safe for the CLI / library callers.
+_EXTRA_FIELDS: list[str] = [
+    "winning_tier",
+    "itunes_title", "itunes_artist", "itunes_album", "itunes_year",
+    "itunes_track_num", "itunes_genre", "itunes_track_view_url",
+    "itunes_confidence",
+    "jio_confidence",
+    "shazam_confidence",
+]
+
+# Field list the custom-order writer actually emits.
+_CUSTOM_MERGED_FIELDS: list[str] = list(_MERGED_FIELDS) + _EXTRA_FIELDS
+
 from .base import LibraryWorker
 
 
@@ -101,7 +118,7 @@ class CustomOrderCanonicalizeWorker(LibraryWorker):
         stats: dict[str, int] = {"auto_apply": 0, "review": 0, "low": 0, "no_match": 0}
 
         with merged_path.open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=_MERGED_FIELDS, extrasaction="ignore")
+            writer = csv.DictWriter(fh, fieldnames=_CUSTOM_MERGED_FIELDS, extrasaction="ignore")
             writer.writeheader()
 
             for i, p in enumerate(files, 1):
@@ -189,6 +206,10 @@ class CustomOrderCanonicalizeWorker(LibraryWorker):
                 for tier_name, match in candidates:
                     self._fill_tier_columns(row, tier_name, match)
 
+                # Record which tier produced the winning match so the review
+                # UI can pre-select it and display tier ranking honestly.
+                row["winning_tier"] = winning_tier
+
                 # ``api_*`` mirrors the winning tier so existing apply_approvals
                 # with pick="itunes" still works regardless of which tier won.
                 if best is not None:
@@ -270,6 +291,7 @@ class CustomOrderCanonicalizeWorker(LibraryWorker):
     # ---- per-tier column writers ------------------------------------------------
     @staticmethod
     def _fill_tier_columns(row: dict, tier: str, match: Any) -> None:
+        conf = float(getattr(match, "confidence", 0.0) or 0.0)
         if tier == "jiosaavn":
             raw = getattr(match, "raw", {}) or {}
             row["jio_title"] = getattr(match, "title", "")
@@ -278,6 +300,7 @@ class CustomOrderCanonicalizeWorker(LibraryWorker):
             row["jio_year"] = getattr(match, "year", "")
             row["jio_language"] = (raw.get("language") if isinstance(raw, dict) else "") or ""
             row["jio_perma_url"] = (raw.get("perma_url") if isinstance(raw, dict) else "") or ""
+            row["jio_confidence"] = conf
         elif tier == "shazam":
             row["shazam_title"] = getattr(match, "title", "")
             row["shazam_artist"] = getattr(match, "artist", "")
@@ -287,8 +310,19 @@ class CustomOrderCanonicalizeWorker(LibraryWorker):
             row["shazam_isrc"] = getattr(match, "isrc", "")
             row["shazam_url"] = getattr(match, "apple_music_url", "")
             row["shazam_image"] = getattr(match, "cover_url", "")
-        # iTunes tier writes its data into the api_* columns at the top
-        # level — handled by the caller via the winning-tier mirror.
+            row["shazam_confidence"] = conf
+        elif tier == "itunes":
+            # Dedicated itunes_* columns let the review UI show iTunes data
+            # even when iTunes was a candidate but didn't win. ``api_*``
+            # still gets the winning tier's data — handled by the caller.
+            row["itunes_title"] = getattr(match, "title", "")
+            row["itunes_artist"] = getattr(match, "artist", "")
+            row["itunes_album"] = getattr(match, "album", "")
+            row["itunes_year"] = getattr(match, "year", "")
+            row["itunes_track_num"] = getattr(match, "track_num", "")
+            row["itunes_genre"] = getattr(match, "genre", "")
+            row["itunes_track_view_url"] = getattr(match, "apple_music_url", "")
+            row["itunes_confidence"] = conf
 
 
 class ApplyApprovalsWorker(LibraryWorker):
