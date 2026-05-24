@@ -1071,15 +1071,19 @@ class PipelineScreen(QWidget):
 
     # ---- metadata: lookup + review + apply --------------------------------
     def _run_canonicalize(self) -> None:
-        assert self._cfg
+        assert self._cfg and self._root is not None
         self._strip.set_status("metadata", "running")
         self._running_pane.set_phase("metadata")
         self._running_pane.headline.setText(
             "Looking up canonical metadata (JioSaavn → iTunes → Shazam)…"
         )
         self._show_running_pane()
+        # Walk the user's ORIGINAL folder (pre-execute) — the worker's
+        # default is ``cfg.root_path / "Music"`` which only exists after
+        # Stage 1 commits the move plan. Forcing self._root here is what
+        # makes the metadata phase actually see the user's files.
         self._attach(
-            CustomOrderCanonicalizeWorker(self._cfg, parent=self),
+            CustomOrderCanonicalizeWorker(self._cfg, music_root=self._root, parent=self),
             self._on_canonicalize_done,
         )
 
