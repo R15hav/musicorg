@@ -1,22 +1,61 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  musicorg app icon
+  Motif: stacked vinyl records (suggesting an organized library) with a
+  serif lowercase "m" mark on the top disc — nods to the IvarText
+  typographic identity. Flat, no gradients, hairline strokes.
+  Palette: purple #79709E background, white #FFFFFF marks,
+  warm yellow #F3C948 single accent dot, near-black #040610 spindle hole.
+-->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1565c0"/>
-      <stop offset="1" stop-color="#0d47a1"/>
-    </linearGradient>
-  </defs>
-  <rect width="256" height="256" rx="44" fill="url(#bg)"/>
-  <!-- Stylised vinyl/disc -->
-  <circle cx="128" cy="128" r="76" fill="#0d2c54" stroke="#ffffff" stroke-width="3" stroke-opacity="0.4"/>
-  <circle cx="128" cy="128" r="60" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.3"/>
-  <circle cx="128" cy="128" r="44" fill="none" stroke="#ffffff" stroke-width="2" stroke-opacity="0.25"/>
-  <circle cx="128" cy="128" r="22" fill="#ffffff"/>
-  <circle cx="128" cy="128" r="6" fill="#0d2c54"/>
-  <!-- Note glyph -->
-  <g transform="translate(146,84)">
-    <rect x="0" y="0" width="6" height="48" fill="#ffffff"/>
-    <ellipse cx="-7" cy="50" rx="13" ry="9" fill="#ffffff"/>
-    <path d="M6,0 C26,4 32,20 30,30 L24,24 C26,16 18,10 6,8 Z" fill="#ffffff"/>
+
+  <!-- Rounded square background — purple per brief -->
+  <rect width="256" height="256" rx="44" fill="#79709E"/>
+
+  <!-- Lower disc (back of the stack) -->
+  <ellipse cx="128" cy="190" rx="78" ry="14" fill="#FFFFFF" fill-opacity="0.18"/>
+  <ellipse cx="128" cy="184" rx="78" ry="14"
+           fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-opacity="0.55"/>
+
+  <!-- Middle disc -->
+  <ellipse cx="128" cy="168" rx="82" ry="15" fill="#FFFFFF" fill-opacity="0.22"/>
+  <ellipse cx="128" cy="162" rx="82" ry="15"
+           fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-opacity="0.7"/>
+
+  <!-- Top disc — main vinyl face -->
+  <circle cx="128" cy="116" r="72" fill="#FFFFFF"/>
+  <!-- Concentric grooves -->
+  <circle cx="128" cy="116" r="62" fill="none" stroke="#79709E" stroke-width="1.5"/>
+  <circle cx="128" cy="116" r="52" fill="none" stroke="#79709E" stroke-width="1.5"/>
+  <circle cx="128" cy="116" r="42" fill="none" stroke="#79709E" stroke-width="1.5"/>
+
+  <!-- Label area on the disc -->
+  <circle cx="128" cy="116" r="32" fill="#79709E"/>
+
+  <!-- Serif lowercase "m" mark on the label, built from simple shapes -->
+  <!-- Baseline ~ y=130, x-height top ~ y=104 -->
+  <g fill="#FFFFFF">
+    <!-- Left stem -->
+    <rect x="108" y="104" width="4.5" height="26"/>
+    <!-- Middle stem -->
+    <rect x="125.75" y="108" width="4.5" height="22"/>
+    <!-- Right stem -->
+    <rect x="143.5" y="108" width="4.5" height="22"/>
+    <!-- Arches connecting the stems (thin serif bridges) -->
+    <path d="M112.5,108 C116,104.5 122,104.5 125.75,108 L125.75,111 C122,108 116,108 112.5,111 Z"/>
+    <path d="M130.25,108 C134,104.5 140,104.5 143.5,108 L143.5,111 C140,108 134,108 130.25,111 Z"/>
+    <!-- Serif feet -->
+    <rect x="104" y="128" width="12.5" height="2.2"/>
+    <rect x="121.75" y="128" width="12.5" height="2.2"/>
+    <rect x="139.5" y="128" width="12.5" height="2.2"/>
+    <!-- Top serif on the left stem -->
+    <rect x="104" y="103.5" width="12.5" height="2.2"/>
   </g>
+
+  <!-- Spindle hole -->
+  <circle cx="128" cy="116" r="3" fill="#040610"/>
+
+  <!-- Warm yellow accent dot — single sparing use per brief -->
+  <circle cx="190" cy="78" r="6" fill="#F3C948"/>
+
 </svg>

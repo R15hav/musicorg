@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from musicorg import Config, ProgressEvent
 
-from ..widgets import StatusPanel
+from ..widgets import Banner, Pill, StatusPanel
 from ..workers import UndoWorker
 
 
@@ -93,35 +93,40 @@ class _UndoRow(QFrame):
     def __init__(self, entry: _UndoEntry, parent: Any = None) -> None:
         super().__init__(parent)
         self._entry = entry
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "QFrame { border: 1px solid palette(mid); border-radius: 6px;"
-            " padding: 10px; }"
-        )
+        self.setProperty("surface", "paper")
         row = QHBoxLayout(self)
-        row.setContentsMargins(16, 10, 16, 10)
+        row.setContentsMargins(18, 14, 18, 14)
         row.setSpacing(16)
 
         text = QVBoxLayout()
-        text.setSpacing(2)
+        text.setSpacing(4)
 
         title = QLabel(entry.display_time)
-        title.setStyleSheet("font-weight: 600; border: none; padding: 0;")
+        title.setProperty("class", "card-title")
         text.addWidget(title)
 
         sub = QLabel(f"{entry.path.name}  ·  {entry.display_size}")
-        sub.setStyleSheet("color: palette(mid); border: none; padding: 0;")
+        sub.setProperty("class", "caption")
         text.addWidget(sub)
 
         row.addLayout(text, 1)
 
+        # Pending state pill — informative, "not yet run".
+        self._status = Pill("Pending", "not")
+        row.addWidget(self._status, alignment=Qt.AlignmentFlag.AlignVCenter)
+
         self._btn = QPushButton("Run undo…")
+        self._btn.setProperty("variant", "danger")
         self._btn.clicked.connect(lambda: self.run_clicked.emit(entry))
         row.addWidget(self._btn, alignment=Qt.AlignmentFlag.AlignVCenter)
 
     def set_running(self, running: bool) -> None:
         self._btn.setEnabled(not running)
         self._btn.setText("Running…" if running else "Run undo…")
+        if running:
+            self._status.set_state("run", "Running")
+        else:
+            self._status.set_state("not", "Pending")
 
 
 class _UndoListPane(QWidget):
@@ -134,31 +139,32 @@ class _UndoListPane(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         self._title = QLabel("Undo history")
-        self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         layout.addWidget(self._title)
 
         self._caption = QLabel("")
         self._caption.setWordWrap(True)
-        self._caption.setStyleSheet("color: palette(mid);")
+        self._caption.setProperty("class", "muted")
         layout.addWidget(self._caption)
 
         self._rows_container = QWidget()
         self._rows_layout = QVBoxLayout(self._rows_container)
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._rows_layout.setSpacing(8)
+        self._rows_layout.setSpacing(10)
         layout.addWidget(self._rows_container, 1)
 
         self._empty = QLabel("No undo scripts in this library yet.")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty.setStyleSheet("color: palette(mid); padding: 32px;")
+        self._empty.setProperty("class", "muted")
         self._empty.setVisible(False)
         layout.addWidget(self._empty)
 
         actions = QHBoxLayout()
         back_btn = QPushButton("← Back")
+        back_btn.setProperty("variant", "ghost")
         back_btn.clicked.connect(self.back_requested)
         actions.addWidget(back_btn)
         actions.addStretch(1)
@@ -207,17 +213,24 @@ class _UndoRunningPane(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         self._title = QLabel("Running undo…")
-        self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         layout.addWidget(self._title)
 
+        # Live summary while running (plain body text).
         self._summary = QLabel("")
         self._summary.setWordWrap(True)
-        self._summary.setStyleSheet("color: palette(mid);")
+        self._summary.setProperty("class", "body")
         self._summary.setVisible(False)
         layout.addWidget(self._summary)
+
+        # Banner placeholder for the finished / failed state — added on demand
+        # so the running state stays uncluttered.
+        self._banner_holder = QVBoxLayout()
+        self._banner: Banner | None = None
+        layout.addLayout(self._banner_holder)
 
         self.status = StatusPanel()
         layout.addWidget(self.status, 1)
@@ -230,8 +243,21 @@ class _UndoRunningPane(QWidget):
         actions.addWidget(self._done_btn)
         layout.addLayout(actions)
 
+    def _swap_banner(self, severity: str, title: str, body: str) -> None:
+        new_banner = Banner(severity=severity, title=title, body=body)
+        if self._banner is not None:
+            self._banner.setParent(None)
+            self._banner.deleteLater()
+        self._banner_holder.addWidget(new_banner)
+        self._banner = new_banner
+
     def start(self, entry: _UndoEntry) -> None:
         self._title.setText(f"Running undo — {entry.display_time}")
+        # Clear any previous banner from the prior run.
+        if self._banner is not None:
+            self._banner.setParent(None)
+            self._banner.deleteLater()
+            self._banner = None
         self._summary.setVisible(False)
         self.status.reset()
         self.status.push(ProgressEvent(
@@ -244,25 +270,29 @@ class _UndoRunningPane(QWidget):
         self.status.set_progress_visible(False)
         if rc == 0:
             self._title.setText("Undo complete")
-            self._summary.setText(
+            body = (
                 "Files were moved back to their original locations. The undo "
                 "script ran without errors."
             )
+            self._swap_banner("info", "Undo complete", body)
         else:
             self._title.setText("Undo finished with errors")
-            self._summary.setText(
+            body = (
                 f"The undo script returned exit code {rc}. Some files may not "
                 "have been reverted. Check the log view above for details."
             )
-        self._summary.setVisible(True)
+            self._swap_banner("error", "Undo finished with errors", body)
+        # Keep the legacy summary label populated (and hidden) so anything
+        # poking at it gets the latest text.
+        self._summary.setText(body)
         self._done_btn.setVisible(True)
         self._done_btn.setFocus()
 
     def set_failure_message(self, message: str) -> None:
         self.status.set_progress_visible(False)
         self._title.setText("Undo failed to start")
+        self._swap_banner("error", "Undo failed to start", message)
         self._summary.setText(message)
-        self._summary.setVisible(True)
         self._done_btn.setVisible(True)
 
 

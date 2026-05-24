@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 from . import __version__
 from .bootstrap import ensure_binaries, needs_setup
 from .main_window import MainWindow
+from .theme import apply_theme
 
 
 def run() -> int:
@@ -32,6 +33,8 @@ def run() -> int:
     app.setApplicationVersion(__version__)
     app.setOrganizationName("musicorg")
     app.setOrganizationDomain("musicorg.local")
+
+    apply_theme(app)
 
     if needs_setup():
         # Show the modal first-run dialog. Worker thread downloads

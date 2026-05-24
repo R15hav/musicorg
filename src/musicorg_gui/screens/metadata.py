@@ -41,15 +41,16 @@ from PySide6.QtWidgets import (
 
 from musicorg import ApplyResult, Config, ProgressEvent
 
-from ..widgets import StatusPanel
+from ..widgets import Banner, Pill, StatTile, StatusPanel
 from ..workers import ApplyApprovalsWorker, CanonicalizeWorker, LibraryWorker
 
 
-_DECISION_COLORS: dict[str, str] = {
-    "auto_apply": "#2e7d32",
-    "review": "#a16207",
-    "low": "#a16207",
-    "no_match": "#616161",
+# Map decision -> Pill state per the design brief.
+_DECISION_PILL: dict[str, tuple[str, str]] = {
+    "auto_apply": ("done", "auto apply"),
+    "review": ("warn", "review"),
+    "low": ("warn", "low"),
+    "no_match": ("not", "no match"),
 }
 
 
@@ -63,29 +64,20 @@ class _ReviewCard(QFrame):
         self._row = row
         self._pick: str | None = self._default_pick()
 
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "QFrame { border: 1px solid palette(mid); border-radius: 6px;"
-            " padding: 10px; }"
-        )
+        self.setProperty("surface", "paper")
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(14, 10, 14, 12)
-        outer.setSpacing(6)
+        outer.setContentsMargins(18, 14, 18, 14)
+        outer.setSpacing(8)
 
         # Header — decision pill + path
         header = QHBoxLayout()
-        header.setSpacing(8)
+        header.setSpacing(10)
 
-        decision = row.get("decision", "").lower()
-        pill = QLabel(decision.replace("_", " ") or "—")
-        color = _DECISION_COLORS.get(decision, "#616161")
-        pill.setStyleSheet(
-            f"QLabel {{ background: {color}; color: white;"
-            f" border-radius: 8px; padding: 1px 8px; font-size: 11px;"
-            f" border: none; }}"
-        )
-        header.addWidget(pill)
+        decision = (row.get("decision") or "").lower()
+        state, label = _DECISION_PILL.get(decision, ("not", decision.replace("_", " ") or "—"))
+        self._decision_pill = Pill(label, state)
+        header.addWidget(self._decision_pill)
 
         try:
             confidence = float(row.get("confidence") or 0)
@@ -93,11 +85,11 @@ class _ReviewCard(QFrame):
             confidence = 0.0
         if confidence:
             conf_label = QLabel(f"{confidence:.2f}")
-            conf_label.setStyleSheet("color: palette(mid); font-size: 11px; border: none; padding: 0;")
+            conf_label.setProperty("class", "caption")
             header.addWidget(conf_label)
 
         path_label = QLabel(Path(row.get("source_path", "")).name)
-        path_label.setStyleSheet("color: palette(mid); font-size: 11px; border: none; padding: 0;")
+        path_label.setProperty("class", "caption")
         path_label.setToolTip(row.get("source_path", ""))
         header.addWidget(path_label)
         header.addStretch(1)
@@ -105,7 +97,7 @@ class _ReviewCard(QFrame):
 
         # Current vs Match — two-column row
         two = QHBoxLayout()
-        two.setSpacing(20)
+        two.setSpacing(24)
         two.addLayout(self._side_block("Current", row, "cur_"), 1)
         two.addLayout(self._side_block("Match", row, "api_"), 1)
         outer.addLayout(two)
@@ -132,10 +124,10 @@ class _ReviewCard(QFrame):
 
     def _side_block(self, title: str, row: dict, prefix: str) -> QVBoxLayout:
         layout = QVBoxLayout()
-        layout.setSpacing(2)
+        layout.setSpacing(4)
 
-        head = QLabel(title)
-        head.setStyleSheet("font-weight: 600; border: none; padding: 0; font-size: 11px;")
+        head = QLabel(title.upper())
+        head.setProperty("class", "footnote")
         layout.addWidget(head)
 
         title_val = (row.get(f"{prefix}title") or "").strip() or "—"
@@ -144,11 +136,19 @@ class _ReviewCard(QFrame):
         year_val = (row.get(f"{prefix}year") or "").strip()
         album_year = f"{album_val}{f' ({year_val})' if year_val else ''}"
 
-        for text in (f"{title_val}", f"{artist_val}", album_year):
-            label = QLabel(text)
-            label.setStyleSheet("border: none; padding: 0;")
-            label.setWordWrap(True)
-            layout.addWidget(label)
+        # Field labels as caption; values as body.
+        for field_label, text in (
+            ("Title", title_val),
+            ("Artist", artist_val),
+            ("Album", album_year),
+        ):
+            cap = QLabel(field_label)
+            cap.setProperty("class", "caption")
+            layout.addWidget(cap)
+            value = QLabel(text)
+            value.setProperty("class", "body")
+            value.setWordWrap(True)
+            layout.addWidget(value)
         return layout
 
     def _set_pick(self, value: str) -> None:
@@ -161,12 +161,16 @@ class _ReviewCard(QFrame):
         skipped = self._pick == "skip"
         self._approve_btn.setChecked(approved)
         self._skip_btn.setChecked(skipped)
-        self._approve_btn.setStyleSheet(
-            "QPushButton:checked { background: #2e7d32; color: white; }"
-        )
-        self._skip_btn.setStyleSheet(
-            "QPushButton:checked { background: #616161; color: white; }"
-        )
+
+        # Swap the variant property for the Approve button based on state.
+        self._approve_btn.setProperty("variant", "primary" if approved else None)
+        self._approve_btn.style().unpolish(self._approve_btn)
+        self._approve_btn.style().polish(self._approve_btn)
+
+        # Skip button stays default — no inline style.
+        self._skip_btn.setProperty("variant", None)
+        self._skip_btn.style().unpolish(self._skip_btn)
+        self._skip_btn.style().polish(self._skip_btn)
 
     @property
     def pick(self) -> str:
@@ -188,7 +192,7 @@ class _LookupPane(QWidget):
         layout.setSpacing(10)
 
         title = QLabel("Looking up canonical metadata…")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        title.setProperty("class", "h2")
         layout.addWidget(title)
 
         sub = QLabel(
@@ -196,7 +200,7 @@ class _LookupPane(QWidget):
             "after if any tracks need your review; otherwise it applies on its own."
         )
         sub.setWordWrap(True)
-        sub.setStyleSheet("color: palette(mid);")
+        sub.setProperty("class", "muted")
         layout.addWidget(sub)
 
         self.status = StatusPanel()
@@ -213,15 +217,30 @@ class _ReviewPane(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         self._title = QLabel("Review canonical metadata")
-        self._title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         layout.addWidget(self._title)
 
-        self._buckets = QLabel("")
+        # StatTile row: Total · Auto-approved · Needs review
+        tiles_row = QHBoxLayout()
+        tiles_row.setSpacing(12)
+        self._tile_total = StatTile("0", "Total")
+        self._tile_auto = StatTile("0", "Auto-approved")
+        self._tile_review = StatTile("0", "Needs review")
+        tiles_row.addWidget(self._tile_total, 1)
+        tiles_row.addWidget(self._tile_auto, 1)
+        tiles_row.addWidget(self._tile_review, 1)
+        layout.addLayout(tiles_row)
+
+        # One-line caption explaining the flow (replaces the old bucket dump).
+        self._buckets = QLabel(
+            "Auto-applied matches and no-match rows are pre-decided; flagged rows "
+            "below need your call before we write to disk."
+        )
         self._buckets.setWordWrap(True)
-        self._buckets.setStyleSheet("color: palette(mid);")
+        self._buckets.setProperty("class", "muted")
         layout.addWidget(self._buckets)
 
         # Bulk action row
@@ -241,21 +260,22 @@ class _ReviewPane(QWidget):
         self._cards_container = QWidget()
         self._cards_layout = QVBoxLayout(self._cards_container)
         self._cards_layout.setContentsMargins(0, 0, 0, 0)
-        self._cards_layout.setSpacing(8)
+        self._cards_layout.setSpacing(10)
         scroll.setWidget(self._cards_container)
         layout.addWidget(scroll, 1)
 
         self._progress_caption = QLabel("")
-        self._progress_caption.setStyleSheet("color: palette(mid); font-size: 12px;")
+        self._progress_caption.setProperty("class", "caption")
         layout.addWidget(self._progress_caption)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
         self._cancel_btn = QPushButton("Back")
+        self._cancel_btn.setProperty("variant", "ghost")
         self._cancel_btn.clicked.connect(self.cancel_clicked)
         actions.addWidget(self._cancel_btn)
         self._save_btn = QPushButton("Save & apply →")
-        self._save_btn.setStyleSheet("padding: 6px 16px; font-weight: 600;")
+        self._save_btn.setProperty("variant", "commit")
         self._save_btn.clicked.connect(self.save_clicked)
         actions.addWidget(self._save_btn)
         layout.addLayout(actions)
@@ -272,12 +292,12 @@ class _ReviewPane(QWidget):
                 w.deleteLater()
         self._cards.clear()
 
-        bits = [f"{n} {k.replace('_', ' ')}" for k, n in bucket_counts.items() if n > 0]
-        self._buckets.setText(
-            "Lookup buckets: " + (", ".join(bits) if bits else "none") +
-            ". auto-apply matches are pre-approved; no-match rows are pre-skipped; "
-            "review / low rows wait for your decision."
-        )
+        total = sum(bucket_counts.values())
+        auto = bucket_counts.get("auto_apply", 0)
+        review = bucket_counts.get("review", 0) + bucket_counts.get("low", 0)
+        self._tile_total.set_value(total)
+        self._tile_auto.set_value(auto)
+        self._tile_review.set_value(review)
 
         # Show review/low rows for user picking; show auto_apply too so the user
         # can see what'll happen (pre-approved). no_match rows are shown muted.
@@ -335,16 +355,17 @@ class _DonePane(QWidget):
         layout.setSpacing(10)
 
         self._title = QLabel("Metadata applied")
-        self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         layout.addWidget(self._title)
 
         self._summary = QLabel("")
         self._summary.setWordWrap(True)
+        self._summary.setProperty("class", "body")
         layout.addWidget(self._summary)
 
         self._undo_caption = QLabel("")
         self._undo_caption.setWordWrap(True)
-        self._undo_caption.setStyleSheet("color: palette(mid); font-size: 12px;")
+        self._undo_caption.setProperty("class", "caption")
         layout.addWidget(self._undo_caption)
 
         layout.addStretch(1)
@@ -382,11 +403,12 @@ class _FailedPane(QWidget):
         layout.setSpacing(10)
 
         title = QLabel("Metadata lookup failed")
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        title.setProperty("class", "h2")
         layout.addWidget(title)
 
         self.message = QLabel("")
         self.message.setWordWrap(True)
+        self.message.setProperty("class", "body")
         layout.addWidget(self.message)
 
         layout.addStretch(1)
@@ -414,7 +436,7 @@ class MetadataScreen(QWidget):
         outer.setSpacing(16)
 
         self._title = QLabel("Retrieve metadata")
-        self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         outer.addWidget(self._title)
 
         self._stack = QStackedWidget()

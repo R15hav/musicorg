@@ -13,6 +13,11 @@ Per [[feedback-auto-pipeline]] Stages 2 and 3 are independently
 launched, not part of Stage 1; this screen is the entry point for them.
 For the v0.3-gui MVP only the navigation paths are stubbed — clicking
 Stage 2 / Stage 3 / Undo shows a "coming next" dialog.
+
+Visual language follows the design brief: a big serif h1 title, a
+muted summary line, a mono undo caption, a row of ``StatTile``s with
+real numbers, the "What's next?" footnote, and four action tiles
+styled with the paper-surface treatment.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -32,38 +37,66 @@ from PySide6.QtWidgets import (
 
 from musicorg import Config
 
+from .. import theme as t
+from ..widgets.design import StatTile
+
 
 class _ActionTile(QFrame):
-    """One large clickable tile for a post-org next step."""
+    """One large clickable tile for a post-org next step.
+
+    Restyled to the design brief — paper surface, card-title sans for
+    the heading, body class for the blurb, primary variant button only
+    when this is the lead action (currently "Retrieve metadata").
+    """
 
     clicked = Signal(str)
 
-    def __init__(self, key: str, title: str, blurb: str, primary: bool = False, parent: Any = None) -> None:
+    def __init__(
+        self,
+        key: str,
+        title: str,
+        blurb: str,
+        primary: bool = False,
+        parent: Any = None,
+    ) -> None:
         super().__init__(parent)
         self._key = key
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        border = "#1565c0" if primary else "palette(mid)"
+        self.setObjectName("actionTile")
+        # Lead tile gets a stronger border to indicate the primary path.
+        border = t.PRIMARY_500 if primary else t.BORDER_LIGHT
         self.setStyleSheet(
-            f"QFrame {{ border: 1px solid {border}; border-radius: 8px; padding: 16px; }}"
+            f"#actionTile {{ background: {t.SURFACE_PAPER};"
+            f" border: 1px solid {border};"
+            f" border-radius: 16px; }}"
         )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(6)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(8)
 
         title_label = QLabel(title)
-        title_label.setStyleSheet("font-size: 15px; font-weight: 600; border: none; padding: 0;")
+        title_label.setProperty("class", "card-title")
         layout.addWidget(title_label)
 
         blurb_label = QLabel(blurb)
+        blurb_label.setProperty("class", "body")
         blurb_label.setWordWrap(True)
-        blurb_label.setStyleSheet("color: palette(mid); border: none; padding: 0;")
-        layout.addWidget(blurb_label)
+        # Override colour to TEXT_MEDIUM so the blurb reads as supporting copy
+        # under the card-title without overriding the body font/size.
+        blurb_label.setStyleSheet(
+            f"QLabel {{ color: {t.TEXT_MEDIUM}; background: transparent;"
+            f" border: none; }}"
+        )
+        layout.addWidget(blurb_label, 1)
 
         btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 4, 0, 0)
         btn_row.addStretch(1)
         self._btn = QPushButton("Open")
-        self._btn.setStyleSheet("padding: 4px 14px;" + (" font-weight: 600;" if primary else ""))
+        if primary:
+            self._btn.setProperty("variant", "primary")
+        self._btn.style().unpolish(self._btn)
+        self._btn.style().polish(self._btn)
         self._btn.clicked.connect(lambda: self.clicked.emit(self._key))
         btn_row.addWidget(self._btn)
         layout.addLayout(btn_row)
@@ -80,30 +113,48 @@ class CompletionScreen(QWidget):
         self._cfg: Config | None = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(48, 32, 48, 32)
-        outer.setSpacing(16)
+        outer.setContentsMargins(64, 40, 64, 40)
+        outer.setSpacing(14)
 
+        # Heading -----------------------------------------------------------
         self._title = QLabel("Library organized")
-        self._title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        self._title.setProperty("class", "h1")
         outer.addWidget(self._title)
 
         self._summary = QLabel("")
+        self._summary.setProperty("class", "muted")
         self._summary.setWordWrap(True)
-        self._summary.setStyleSheet("color: palette(mid);")
         outer.addWidget(self._summary)
 
         self._undo_caption = QLabel("")
+        self._undo_caption.setProperty("class", "mono")
         self._undo_caption.setWordWrap(True)
-        self._undo_caption.setStyleSheet("color: palette(mid); font-size: 12px;")
         outer.addWidget(self._undo_caption)
 
+        outer.addSpacing(10)
+
+        # Stat tiles --------------------------------------------------------
+        self._stats_row = QHBoxLayout()
+        self._stats_row.setSpacing(14)
+
+        self._stat_files = StatTile("0", "Files moved")
+        self._stat_dups = StatTile("0", "Duplicates quarantined")
+        self._stat_phases = StatTile("0 / 7", "Phases done")
+
+        self._stats_row.addWidget(self._stat_files, 1)
+        self._stats_row.addWidget(self._stat_dups, 1)
+        self._stats_row.addWidget(self._stat_phases, 1)
+        outer.addLayout(self._stats_row)
+
+        outer.addSpacing(8)
+
+        # "What's next?" eyebrow + action tiles -----------------------------
         next_label = QLabel("What's next?")
-        next_label.setStyleSheet("font-weight: 600; margin-top: 12px;")
+        next_label.setProperty("class", "footnote")
         outer.addWidget(next_label)
 
-        # Two-column grid of tiles
         tiles_row = QHBoxLayout()
-        tiles_row.setSpacing(12)
+        tiles_row.setSpacing(14)
 
         meta_tile = _ActionTile(
             "metadata",
@@ -113,7 +164,7 @@ class CompletionScreen(QWidget):
             primary=True,
         )
         meta_tile.clicked.connect(self._on_metadata)
-        tiles_row.addWidget(meta_tile)
+        tiles_row.addWidget(meta_tile, 1)
 
         upgrade_tile = _ActionTile(
             "upgrade",
@@ -122,11 +173,11 @@ class CompletionScreen(QWidget):
             "cookies and a Widevine device file (set up separately).",
         )
         upgrade_tile.clicked.connect(self._on_upgrade)
-        tiles_row.addWidget(upgrade_tile)
+        tiles_row.addWidget(upgrade_tile, 1)
         outer.addLayout(tiles_row)
 
         tiles_row2 = QHBoxLayout()
-        tiles_row2.setSpacing(12)
+        tiles_row2.setSpacing(14)
 
         undo_tile = _ActionTile(
             "undo",
@@ -135,7 +186,7 @@ class CompletionScreen(QWidget):
             "Revert any step.",
         )
         undo_tile.clicked.connect(self._on_undo)
-        tiles_row2.addWidget(undo_tile)
+        tiles_row2.addWidget(undo_tile, 1)
 
         another_tile = _ActionTile(
             "restart",
@@ -144,10 +195,26 @@ class CompletionScreen(QWidget):
             "so this doesn't touch the one you just finished.",
         )
         another_tile.clicked.connect(self._on_restart)
-        tiles_row2.addWidget(another_tile)
+        tiles_row2.addWidget(another_tile, 1)
         outer.addLayout(tiles_row2)
 
         outer.addStretch(1)
+
+    def _set_stats(
+        self,
+        files_value: str,
+        files_label: str,
+        dups_value: str,
+        dups_label: str,
+        phases_value: str,
+        phases_label: str,
+    ) -> None:
+        self._stat_files.set_value(files_value)
+        self._stat_files.set_label(files_label)
+        self._stat_dups.set_value(dups_value)
+        self._stat_dups.set_label(dups_label)
+        self._stat_phases.set_value(phases_value)
+        self._stat_phases.set_label(phases_label)
 
     def show_for(self, cfg: Config, execute_stats: dict) -> None:
         self._cfg = cfg
@@ -176,6 +243,19 @@ class CompletionScreen(QWidget):
             self._undo_caption.setText(f"Undo script written: {undo}")
         else:
             self._undo_caption.setText("")
+
+        # Fresh-pipeline stats: files moved, duplicates quarantined,
+        # phases done. Stage 1 covers phases 1-5; surface that as the
+        # accurate "phases done" tile so the brief's 7-phase ring is
+        # honest (Stages 2 and 3 still pending).
+        self._set_stats(
+            files_value=f"{moved:,}",
+            files_label="Files moved",
+            dups_value=f"{dup_moved:,}",
+            dups_label="Duplicates quarantined",
+            phases_value="5 / 7",
+            phases_label="Phases done",
+        )
 
     def show_existing(self, cfg: Config) -> None:
         """Land on Completion for a library opened from the recent list.
@@ -209,6 +289,19 @@ class CompletionScreen(QWidget):
             self._undo_caption.setText(f"Most recent undo: {undo_scripts[-1].name}")
         else:
             self._undo_caption.setText("")
+
+        # For "opened from recent": show track count + prior-run count.
+        # Replace the middle tile with a runs counter; the third tile
+        # keeps the phases hint based on whether at least one run exists.
+        phases_label = "7 / 7" if undo_scripts else "0 / 7"
+        self._set_stats(
+            files_value=f"{track_count:,}",
+            files_label="Tracks scanned",
+            dups_value=f"{len(undo_scripts):,}",
+            dups_label="Prior organize runs",
+            phases_value=phases_label,
+            phases_label="Phases done",
+        )
 
     @Slot(str)
     def _on_metadata(self, _key: str) -> None:

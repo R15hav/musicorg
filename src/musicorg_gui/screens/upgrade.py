@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from musicorg import Config, ProgressEvent, permanent_skip_report
 
-from ..widgets import StatusPanel
+from ..widgets import Banner, Pill, StatTile, StatusPanel
 from ..workers import LibraryWorker, UpgradeWorker
 
 
@@ -63,6 +63,15 @@ def _count_candidates(state_dir: Path) -> int:
     return 0
 
 
+# Map blocker key -> (pill label when missing, pill label when ready).
+_GATE_ROWS: tuple[tuple[str, str], ...] = (
+    ("cookies", "Apple Music cookies.txt"),
+    ("wvd", "Widevine .wvd device file"),
+    ("gamdl", "gamdl on PATH"),
+    ("candidates", "Apple Music URLs in state CSVs"),
+)
+
+
 class _GatePane(QWidget):
     """Shown when something the upgrade depends on isn't ready."""
 
@@ -73,38 +82,67 @@ class _GatePane(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         self._title = QLabel("Lossless upgrade")
-        self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         layout.addWidget(self._title)
 
-        self._body = QLabel("")
-        self._body.setWordWrap(True)
-        self._body.setStyleSheet("color: palette(mid);")
-        self._body.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self._body)
+        self._intro = QLabel(
+            "Before the lossless upgrade can run, every prerequisite below "
+            "needs to be ready."
+        )
+        self._intro.setWordWrap(True)
+        self._intro.setProperty("class", "muted")
+        layout.addWidget(self._intro)
+
+        # Rows live on a paper surface for visual grouping.
+        self._rows_frame = QFrame()
+        self._rows_frame.setProperty("surface", "paper")
+        rows_layout = QVBoxLayout(self._rows_frame)
+        rows_layout.setContentsMargins(18, 14, 18, 14)
+        rows_layout.setSpacing(8)
+
+        self._row_widgets: dict[str, tuple[Pill, QLabel]] = {}
+        for key, label in _GATE_ROWS:
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            pill = Pill("Missing", "block")
+            row.addWidget(pill)
+            text = QLabel(label)
+            text.setProperty("class", "body")
+            row.addWidget(text)
+            row.addStretch(1)
+            rows_layout.addLayout(row)
+            self._row_widgets[key] = (pill, text)
+        layout.addWidget(self._rows_frame)
 
         layout.addStretch(1)
 
         actions = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
+        self._back_btn.setProperty("variant", "ghost")
         self._back_btn.clicked.connect(self.back_requested)
         actions.addWidget(self._back_btn)
         actions.addStretch(1)
         self._setup_btn = QPushButton("Open gamdl setup")
-        self._setup_btn.setStyleSheet("padding: 6px 16px; font-weight: 600;")
+        self._setup_btn.setProperty("variant", "primary")
         self._setup_btn.clicked.connect(self.setup_requested)
         actions.addWidget(self._setup_btn)
         layout.addLayout(actions)
 
-    def show_blockers(self, blockers: list[str], has_setup_path: bool) -> None:
-        bullets = "".join(f"<li>{b}</li>" for b in blockers)
-        self._body.setText(
-            "Before the lossless upgrade can run, the following need "
-            f"attention:<ul>{bullets}</ul>"
-        )
-        # If the only problem is "no candidates", the setup screen won't help.
+    def show_status(
+        self,
+        statuses: dict[str, bool],
+        has_setup_path: bool,
+    ) -> None:
+        """Repaint each gate row to ready / block based on statuses."""
+        for key, (pill, _) in self._row_widgets.items():
+            ok = statuses.get(key, False)
+            if ok:
+                pill.set_state("done", "Ready")
+            else:
+                pill.set_state("block", "Missing")
         self._setup_btn.setVisible(has_setup_path)
 
 
@@ -118,25 +156,23 @@ class _ConfirmPane(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         self._title = QLabel("Lossless upgrade")
-        self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         layout.addWidget(self._title)
 
-        self._count_label = QLabel("")
-        self._count_label.setWordWrap(True)
-        layout.addWidget(self._count_label)
-
-        note = QLabel(
-            "gamdl makes Apple Music download requests; expect roughly "
-            "30 seconds per track. Each successful upgrade replaces the "
-            "lossy original — an undo script is written so the move is "
-            "reversible."
+        # Informational banner — track count + the gamdl latency warning.
+        self._banner = Banner(
+            severity="info",
+            title="0 tracks will be upgraded",
+            body=(
+                "gamdl makes Apple Music requests; expect ~30 sec per track. "
+                "Each successful upgrade replaces the lossy original — an "
+                "undo script is written so the move is reversible."
+            ),
         )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: palette(mid); font-size: 12px;")
-        layout.addWidget(note)
+        layout.addWidget(self._banner)
 
         self._dry_run = QCheckBox(
             "Dry run (skip downloads — just print what would happen)"
@@ -147,11 +183,12 @@ class _ConfirmPane(QWidget):
 
         actions = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
+        self._back_btn.setProperty("variant", "ghost")
         self._back_btn.clicked.connect(self.back_requested)
         actions.addWidget(self._back_btn)
         actions.addStretch(1)
         self._start_btn = QPushButton("Start upgrade →")
-        self._start_btn.setStyleSheet("padding: 6px 16px; font-weight: 600;")
+        self._start_btn.setProperty("variant", "commit")
         self._start_btn.clicked.connect(
             lambda: self.start_clicked.emit(self._dry_run.isChecked())
         )
@@ -159,10 +196,26 @@ class _ConfirmPane(QWidget):
         layout.addLayout(actions)
 
     def show_for(self, n_candidates: int) -> None:
-        self._count_label.setText(
-            f"<b>{n_candidates}</b> track{'s' if n_candidates != 1 else ''} "
-            "will be upgraded to ALAC via gamdl."
+        # Rebuild the banner with the right count. The Banner widget bakes
+        # its title at construction so we keep one composer here and swap
+        # the whole thing in place.
+        parent_layout = self.layout()
+        new_banner = Banner(
+            severity="info",
+            title=(
+                f"{n_candidates} track{'s' if n_candidates != 1 else ''} "
+                "will be upgraded"
+            ),
+            body=(
+                "gamdl makes Apple Music requests; expect ~30 sec per track. "
+                "Each successful upgrade replaces the lossy original — an "
+                "undo script is written so the move is reversible."
+            ),
         )
+        parent_layout.replaceWidget(self._banner, new_banner)
+        self._banner.setParent(None)
+        self._banner.deleteLater()
+        self._banner = new_banner
         self._dry_run.setChecked(False)
 
 
@@ -176,7 +229,7 @@ class _RunningPane(QWidget):
         layout.setSpacing(10)
 
         title = QLabel("Upgrading to lossless…")
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        title.setProperty("class", "card-title")
         layout.addWidget(title)
 
         sub = QLabel(
@@ -184,7 +237,7 @@ class _RunningPane(QWidget):
             "Skips are recorded to upgrade_skips.csv with their reason."
         )
         sub.setWordWrap(True)
-        sub.setStyleSheet("color: palette(mid);")
+        sub.setProperty("class", "muted")
         layout.addWidget(sub)
 
         self.status = StatusPanel()
@@ -200,35 +253,45 @@ class _DonePane(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         self._title = QLabel("Upgrade complete")
-        self._title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        self._title.setProperty("class", "h2")
         layout.addWidget(self._title)
 
-        self._summary = QLabel("")
-        self._summary.setWordWrap(True)
-        layout.addWidget(self._summary)
+        # StatTile triplet
+        tiles_row = QHBoxLayout()
+        tiles_row.setSpacing(12)
+        self._tile_upgraded = StatTile("0", "Upgraded")
+        self._tile_permanent = StatTile("0", "Permanent skips")
+        self._tile_transient = StatTile("0", "Transient failures")
+        tiles_row.addWidget(self._tile_upgraded, 1)
+        tiles_row.addWidget(self._tile_permanent, 1)
+        tiles_row.addWidget(self._tile_transient, 1)
+        layout.addLayout(tiles_row)
 
+        # Skip-by-reason group lives on a paper surface.
+        self._skips_frame = QFrame()
+        self._skips_frame.setProperty("surface", "paper")
+        self._skips_layout = QVBoxLayout(self._skips_frame)
+        self._skips_layout.setContentsMargins(18, 14, 18, 14)
+        self._skips_layout.setSpacing(8)
         self._skips_title = QLabel("")
-        self._skips_title.setStyleSheet("font-weight: 600; margin-top: 8px;")
+        self._skips_title.setProperty("class", "footnote")
         self._skips_title.setVisible(False)
-        layout.addWidget(self._skips_title)
+        self._skips_layout.addWidget(self._skips_title)
+        self._skips_frame.setVisible(False)
 
         # Skip breakdown lives in a scroll area in case the taxonomy grows.
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._skips_container = QWidget()
-        self._skips_layout = QVBoxLayout(self._skips_container)
-        self._skips_layout.setContentsMargins(0, 0, 0, 0)
-        self._skips_layout.setSpacing(4)
-        scroll.setWidget(self._skips_container)
+        scroll.setWidget(self._skips_frame)
         layout.addWidget(scroll, 1)
 
         self._undo_caption = QLabel("")
         self._undo_caption.setWordWrap(True)
-        self._undo_caption.setStyleSheet("color: palette(mid); font-size: 12px;")
+        self._undo_caption.setProperty("class", "caption")
         layout.addWidget(self._undo_caption)
 
         actions = QHBoxLayout()
@@ -263,33 +326,54 @@ class _DonePane(QWidget):
             "Upgrade complete (dry run)" if was_dry_run else "Upgrade complete"
         )
 
-        bits: list[str] = []
         if was_dry_run:
-            bits.append(f"{dry_run_count} would-upgrade")
+            self._tile_upgraded.set_value(dry_run_count)
+            self._tile_upgraded.set_label("Would upgrade")
         else:
-            bits.append(f"{upgraded} upgraded")
-        bits.append(f"{permanent} permanently skipped")
-        bits.append(f"{transient} transient failures")
-        self._summary.setText("  ·  ".join(bits))
+            self._tile_upgraded.set_value(upgraded)
+            self._tile_upgraded.set_label("Upgraded")
+        self._tile_permanent.set_value(permanent)
+        self._tile_transient.set_value(transient)
 
-        # Skip breakdown
-        while self._skips_layout.count():
-            item = self._skips_layout.takeAt(0)
+        # Rebuild skip breakdown rows.
+        # Drop everything except the title label (index 0).
+        while self._skips_layout.count() > 1:
+            item = self._skips_layout.takeAt(1)
             w = item.widget() if item else None
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+            else:
+                lay = item.layout() if item else None
+                if lay is not None:
+                    # Recursively detach children of nested layouts.
+                    while lay.count():
+                        sub = lay.takeAt(0)
+                        sw = sub.widget() if sub else None
+                        if sw is not None:
+                            sw.setParent(None)
+                            sw.deleteLater()
         non_empty = [(reason, rows) for reason, rows in skip_report.items() if rows]
         if non_empty:
             self._skips_title.setText("Permanent skips by reason")
             self._skips_title.setVisible(True)
+            self._skips_frame.setVisible(True)
             for reason, rows in non_empty:
-                line = QLabel(f"  {reason}: {len(rows)}")
-                line.setStyleSheet("color: palette(mid); font-size: 12px;")
-                self._skips_layout.addWidget(line)
-            self._skips_layout.addStretch(1)
+                row = QHBoxLayout()
+                row.setSpacing(10)
+                pill = Pill("permanent", "block")
+                row.addWidget(pill)
+                reason_label = QLabel(reason)
+                reason_label.setProperty("class", "body")
+                row.addWidget(reason_label)
+                row.addStretch(1)
+                count_label = QLabel(str(len(rows)))
+                count_label.setProperty("class", "caption")
+                row.addWidget(count_label)
+                self._skips_layout.addLayout(row)
         else:
             self._skips_title.setVisible(False)
+            self._skips_frame.setVisible(False)
 
         undo_path = summary.get("undo_path") if isinstance(summary, dict) else ""
         if undo_path:
@@ -307,14 +391,18 @@ class _FailedPane(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
-        title = QLabel("Upgrade failed")
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
-        layout.addWidget(title)
-
+        # The banner is the whole headline here; we still expose ``message`` so
+        # the screen can call into it the way it always has.
+        self._banner_holder = QVBoxLayout()
+        layout.addLayout(self._banner_holder)
+        self._banner: Banner | None = None
         self.message = QLabel("")
         self.message.setWordWrap(True)
+        self.message.setVisible(False)
+        # Keep the QLabel alive (existing wiring writes to it) but render the
+        # actual UI through the Banner widget we rebuild on each set.
         layout.addWidget(self.message)
 
         layout.addStretch(1)
@@ -325,6 +413,20 @@ class _FailedPane(QWidget):
         back_btn.clicked.connect(self.back_clicked)
         actions.addWidget(back_btn)
         layout.addLayout(actions)
+
+    def set_message(self, text: str) -> None:
+        # Keep the legacy attribute populated for anything that reads it.
+        self.message.setText(text)
+        new_banner = Banner(
+            severity="error",
+            title="Upgrade failed",
+            body=text or "The upgrade worker reported a failure.",
+        )
+        if self._banner is not None:
+            self._banner.setParent(None)
+            self._banner.deleteLater()
+        self._banner_holder.addWidget(new_banner)
+        self._banner = new_banner
 
 
 class UpgradeScreen(QWidget):
@@ -369,39 +471,30 @@ class UpgradeScreen(QWidget):
     # ---- public API ----
     def show_for(self, cfg: Config) -> None:
         self._cfg = cfg
-        blockers: list[str] = []
-        has_setup_path = False
-
-        if not cfg.gamdl_cookies_path or not Path(cfg.gamdl_cookies_path).exists():
-            blockers.append(
-                "Apple Music <b>cookies.txt</b> is not configured. "
-                "Set it up in the gamdl setup screen."
-            )
-            has_setup_path = True
-        if not cfg.gamdl_wvd_path or not Path(cfg.gamdl_wvd_path).exists():
-            blockers.append(
-                "Widevine <b>.wvd</b> device file is not configured. "
-                "Set it up in the gamdl setup screen."
-            )
-            has_setup_path = True
-        if shutil.which("gamdl") is None:
-            blockers.append(
-                "<b>gamdl</b> is not on your PATH. Install it from the "
-                "gamdl setup screen."
-            )
-            has_setup_path = True
-
+        cookies_ok = bool(
+            cfg.gamdl_cookies_path and Path(cfg.gamdl_cookies_path).exists()
+        )
+        wvd_ok = bool(
+            cfg.gamdl_wvd_path and Path(cfg.gamdl_wvd_path).exists()
+        )
+        gamdl_ok = shutil.which("gamdl") is not None
         candidates = _count_candidates(Path(cfg.state_dir))
-        if not blockers and candidates == 0:
-            blockers.append(
-                "No Apple Music URLs found in 16_merged.csv. Run "
-                "<b>Retrieve metadata</b> first so the lookup chain can "
-                "harvest URLs for the upgrade step."
-            )
-            has_setup_path = False
+        candidates_ok = candidates > 0
 
-        if blockers:
-            self._gate_pane.show_blockers(blockers, has_setup_path)
+        statuses = {
+            "cookies": cookies_ok,
+            "wvd": wvd_ok,
+            "gamdl": gamdl_ok,
+            "candidates": candidates_ok,
+        }
+
+        prereqs_ok = cookies_ok and wvd_ok and gamdl_ok
+        all_ok = prereqs_ok and candidates_ok
+
+        if not all_ok:
+            # If the only problem is "no candidates", setup screen won't help.
+            has_setup_path = not prereqs_ok
+            self._gate_pane.show_status(statuses, has_setup_path)
             self._stack.setCurrentWidget(self._gate_pane)
             return
 
@@ -438,5 +531,5 @@ class UpgradeScreen(QWidget):
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
-        self._failed_pane.message.setText(message)
+        self._failed_pane.set_message(message)
         self._stack.setCurrentWidget(self._failed_pane)

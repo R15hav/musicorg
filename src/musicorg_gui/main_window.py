@@ -1,10 +1,10 @@
-"""Top-level QMainWindow — hosts the WelcomeScreen → PipelineScreen → CompletionScreen flow.
+"""Top-level QMainWindow — TopBar + QStackedWidget of screens.
 
-The auto-pipeline model: once the user picks a folder + mode on Welcome,
-Pipeline runs Stage 1 unattended, pausing only for plan-preview
-approval. Pipeline emits ``completed`` → MainWindow shows Completion.
-From Completion, "Organize another library" returns to Welcome;
-Metadata / Upgrade / Undo are separate functions (stubs in v0.3-gui).
+The TopBar is persistent across all screens (per design brief P02:
+"Undo is felt, not documented" — same chip in the same place
+everywhere). The stack hosts: WelcomeScreen → PipelineScreen →
+CompletionScreen, with side detours to UndoScreen, MetadataScreen,
+GamdlSetupScreen, UpgradeScreen reached from Completion.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Slot
-from PySide6.QtWidgets import QMainWindow, QStackedWidget
+from PySide6.QtWidgets import QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from musicorg import Config
 
@@ -28,6 +28,7 @@ from .screens import (
     UpgradeScreen,
     WelcomeScreen,
 )
+from .widgets import TopBar
 from .workers import ApplyMode
 
 
@@ -35,20 +36,31 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("musicorg")
-        self.resize(1000, 680)
+        self.resize(1080, 720)
 
         self._active_cfg: Config | None = None
 
-        self._stack = QStackedWidget(self)
-        self.setCentralWidget(self._stack)
+        # Central widget hosts TopBar + QStackedWidget.
+        central = QWidget()
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._topbar = TopBar()
+        outer.addWidget(self._topbar)
+
+        self._stack = QStackedWidget()
+        outer.addWidget(self._stack, 1)
+
+        self.setCentralWidget(central)
 
         self._welcome = WelcomeScreen(self)
         self._pipeline = PipelineScreen(self)
         self._completion = CompletionScreen(self)
         self._undo = UndoScreen(self)
         self._metadata = MetadataScreen(self)
-        self._upgrade = UpgradeScreen(self)
         self._gamdl_setup = GamdlSetupScreen(self)
+        self._upgrade = UpgradeScreen(self)
 
         for screen in (
             self._welcome,
@@ -56,17 +68,18 @@ class MainWindow(QMainWindow):
             self._completion,
             self._undo,
             self._metadata,
-            self._upgrade,
             self._gamdl_setup,
+            self._upgrade,
         ):
             self._stack.addWidget(screen)
         self._stack.setCurrentWidget(self._welcome)
 
+        # Screen → MainWindow wiring
         self._welcome.start_requested.connect(self._on_start_requested)
         self._welcome.open_existing.connect(self._on_open_existing)
         self._pipeline.completed.connect(self._on_pipeline_completed)
         self._pipeline.cancelled.connect(self._go_to_welcome)
-        self._pipeline.failed_out.connect(lambda _msg: None)  # handled inside pipeline; nav stays
+        self._pipeline.failed_out.connect(lambda _msg: None)
         self._completion.restart_requested.connect(self._go_to_welcome)
         self._completion.undo_requested.connect(self._show_undo)
         self._completion.metadata_requested.connect(self._show_metadata)
@@ -75,33 +88,55 @@ class MainWindow(QMainWindow):
         self._metadata.back_requested.connect(self._show_completion)
         self._upgrade.back_requested.connect(self._show_completion)
         self._upgrade.setup_requested.connect(self._show_gamdl_setup)
-        # Gamdl setup is reached only from the Upgrade screen, so both Back
-        # and Proceed return to Upgrade — which will recompute its own gate.
         self._gamdl_setup.back_requested.connect(self._show_upgrade)
         self._gamdl_setup.proceed_requested.connect(self._show_upgrade)
 
+        # TopBar wiring
+        self._topbar.library_clicked.connect(self._go_to_welcome)
+        self._topbar.undo_clicked.connect(self._show_undo_from_topbar)
+        self._topbar.settings_clicked.connect(self._on_settings_clicked)
+
+    # ─── Screen lifecycle helpers ─────────────────────────────────────
+
+    def _set_active_library(self, cfg: Config | None) -> None:
+        self._active_cfg = cfg
+        if cfg is None:
+            self.setWindowTitle("musicorg")
+            self._topbar.set_library(None)
+            self._topbar.set_undo(available=False)
+            return
+        self.setWindowTitle(f"musicorg — {cfg.library_slug}")
+        self._topbar.set_library(cfg.library_slug, cfg.library_root)
+        self._refresh_undo_chip()
+
+    def _refresh_undo_chip(self) -> None:
+        if self._active_cfg is None:
+            self._topbar.set_undo(available=False)
+            return
+        state_dir = Path(self._active_cfg.state_dir)
+        undo_scripts = list(state_dir.glob("undo_*.sh"))
+        if undo_scripts:
+            newest = max(undo_scripts, key=lambda p: p.stat().st_mtime)
+            self._topbar.set_undo(available=True, label=f"Undo · {newest.stem.split('_', 1)[-1]}")
+        else:
+            self._topbar.set_undo(available=False)
+
+    # ─── Slots ────────────────────────────────────────────────────────
+
     @Slot(object, object, str)
     def _on_start_requested(self, cfg: Config, root: Path, mode: str) -> None:
-        self._active_cfg = cfg
-        self.setWindowTitle(f"musicorg — {cfg.library_slug}")
+        self._set_active_library(cfg)
         self._stack.setCurrentWidget(self._pipeline)
         self._pipeline.start(cfg, root, mode)  # type: ignore[arg-type]
 
     @Slot(object)
     def _on_open_existing(self, library: KnownLibrary) -> None:
-        """Open a known library from the Welcome recent-list.
-
-        Organized libraries (an undo_*.sh exists) jump straight to
-        Completion with its existing summary. Partial libraries
-        re-enter the Pipeline with their previously-chosen mode + country.
-        """
         from musicorg import load_config
 
         cfg = load_config(library=library.slug, root=library.root, state_root=state_root())
         cfg.default_country = library.default_country  # type: ignore[assignment]
         cfg.apply_mode = library.apply_mode  # type: ignore[assignment]
-        self._active_cfg = cfg
-        self.setWindowTitle(f"musicorg — {cfg.library_slug}")
+        self._set_active_library(cfg)
 
         if library.organized:
             self._completion.show_existing(cfg)
@@ -114,14 +149,14 @@ class MainWindow(QMainWindow):
     def _on_pipeline_completed(self, stats: dict) -> None:
         if self._active_cfg is None:
             return
+        self._refresh_undo_chip()
         self._completion.show_for(self._active_cfg, stats)
         self._stack.setCurrentWidget(self._completion)
 
     def _go_to_welcome(self) -> None:
-        self.setWindowTitle("musicorg")
+        self._set_active_library(None)
         self._welcome.reset()
         self._stack.setCurrentWidget(self._welcome)
-        self._active_cfg = None
 
     def _show_undo(self) -> None:
         if self._active_cfg is None:
@@ -129,9 +164,13 @@ class MainWindow(QMainWindow):
         self._undo.show_for(self._active_cfg)
         self._stack.setCurrentWidget(self._undo)
 
+    def _show_undo_from_topbar(self) -> None:
+        if self._active_cfg is None:
+            return
+        self._show_undo()
+
     def _show_completion(self) -> None:
-        # Reached only after viewing undo history; the Completion screen
-        # is already populated from the prior pipeline run.
+        self._refresh_undo_chip()
         self._stack.setCurrentWidget(self._completion)
 
     def _show_metadata(self) -> None:
@@ -151,3 +190,7 @@ class MainWindow(QMainWindow):
             return
         self._stack.setCurrentWidget(self._gamdl_setup)
         self._gamdl_setup.show_for(self._active_cfg)
+
+    def _on_settings_clicked(self) -> None:
+        # Settings dialog is a future slice; for now this is a no-op.
+        pass

@@ -8,7 +8,7 @@ gamdl needs three things before it can pull ALAC originals:
    cannot host or distribute these; see the gamdl README.
 3. **gamdl itself**, installed and on ``PATH``.
 
-Each step shows a coloured status dot, a brief blurb, and an inline
+Each step shows a coloured status pill, a brief blurb, and an inline
 control. Step 4 is a roll-up: green check when all three steps are
 ready, otherwise lists what's still missing. The Continue button is
 disabled until every step is green.
@@ -41,10 +41,7 @@ from PySide6.QtWidgets import (
 
 from musicorg import Config, save_global_config
 
-
-_DOT_OK = "#2e7d32"
-_DOT_MISSING = "#c62828"
-_DOT_MUTED = "#616161"
+from ..widgets import Pill
 
 
 def _path_is_readable(p: str) -> bool:
@@ -76,51 +73,58 @@ def _gamdl_version() -> str | None:
 
 
 class _StepCard(QFrame):
-    """One step in the walkthrough — title, status pill, blurb, controls."""
+    """One step in the walkthrough — big serif numeral on the left, title,
+    status pill, blurb, and inline controls on the right."""
 
-    def __init__(self, parent: Any = None) -> None:
+    def __init__(self, number: int | None, parent: Any = None) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "QFrame { border: 1px solid palette(mid); border-radius: 6px;"
-            " padding: 10px; }"
-        )
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(14, 10, 14, 12)
-        outer.setSpacing(6)
+        self.setProperty("surface", "paper")
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(16)
+
+        # Phase numeral (left rail).
+        if number is not None:
+            num = QLabel(str(number))
+            num.setProperty("class", "phase-num")
+            num.setFixedWidth(48)
+            num.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            outer.addWidget(num)
+        else:
+            # Spacer so summary card lines up under the numeral column.
+            spacer = QLabel("")
+            spacer.setFixedWidth(48)
+            outer.addWidget(spacer)
+
+        body = QVBoxLayout()
+        body.setSpacing(6)
 
         header = QHBoxLayout()
-        header.setSpacing(8)
+        header.setSpacing(10)
         self._title = QLabel("")
-        self._title.setStyleSheet(
-            "font-weight: 600; border: none; padding: 0; font-size: 14px;"
-        )
+        self._title.setProperty("class", "card-title")
         header.addWidget(self._title)
         header.addStretch(1)
-        self._status_pill = QLabel("")
-        self._status_pill.setStyleSheet(
-            f"QLabel {{ background: {_DOT_MUTED}; color: white;"
-            f" border-radius: 8px; padding: 1px 8px; font-size: 11px;"
-            f" border: none; }}"
-        )
+        self._status_pill = Pill("", "not")
         header.addWidget(self._status_pill)
-        outer.addLayout(header)
+        body.addLayout(header)
 
         self._blurb = QLabel("")
         self._blurb.setWordWrap(True)
-        self._blurb.setStyleSheet("color: palette(mid); border: none; padding: 0;")
-        outer.addWidget(self._blurb)
+        self._blurb.setProperty("class", "muted")
+        body.addWidget(self._blurb)
 
         self._controls_row = QHBoxLayout()
         self._controls_row.setSpacing(8)
-        outer.addLayout(self._controls_row)
+        body.addLayout(self._controls_row)
 
         self._detail = QLabel("")
         self._detail.setWordWrap(True)
-        self._detail.setStyleSheet(
-            "color: palette(mid); border: none; padding: 0; font-size: 11px;"
-        )
-        outer.addWidget(self._detail)
+        self._detail.setProperty("class", "caption")
+        body.addWidget(self._detail)
+
+        outer.addLayout(body, 1)
 
     def set_title(self, text: str) -> None:
         self._title.setText(text)
@@ -128,14 +132,9 @@ class _StepCard(QFrame):
     def set_blurb(self, text: str) -> None:
         self._blurb.setText(text)
 
-    def set_status(self, ok: bool | None, label: str) -> None:
-        color = _DOT_OK if ok else (_DOT_MISSING if ok is False else _DOT_MUTED)
-        self._status_pill.setText(label)
-        self._status_pill.setStyleSheet(
-            f"QLabel {{ background: {color}; color: white;"
-            f" border-radius: 8px; padding: 1px 8px; font-size: 11px;"
-            f" border: none; }}"
-        )
+    def set_status(self, state: str, label: str) -> None:
+        """state is a Pill state ('done', 'block', 'warn', etc.)."""
+        self._status_pill.set_state(state, label)
 
     def set_detail(self, text: str) -> None:
         self._detail.setText(text)
@@ -162,7 +161,7 @@ class GamdlSetupScreen(QWidget):
         outer.setSpacing(16)
 
         title = QLabel("Lossless upgrade setup")
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        title.setProperty("class", "h2")
         outer.addWidget(title)
 
         intro = QLabel(
@@ -170,7 +169,7 @@ class GamdlSetupScreen(QWidget):
             "originals. Two files are required, plus the gamdl tool itself."
         )
         intro.setWordWrap(True)
-        intro.setStyleSheet("color: palette(mid);")
+        intro.setProperty("class", "muted")
         outer.addWidget(intro)
 
         # Scrollable card stack so this still works on small windows.
@@ -180,11 +179,11 @@ class GamdlSetupScreen(QWidget):
         cards_container = QWidget()
         cards_layout = QVBoxLayout(cards_container)
         cards_layout.setContentsMargins(0, 0, 0, 0)
-        cards_layout.setSpacing(10)
+        cards_layout.setSpacing(12)
 
         # Step 1 — cookies
-        self._cookies_card = _StepCard()
-        self._cookies_card.set_title("Step 1 — Apple Music cookies")
+        self._cookies_card = _StepCard(1)
+        self._cookies_card.set_title("Apple Music cookies")
         self._cookies_card.set_blurb(
             "Install the Cookie-Editor browser extension, sign into "
             "music.apple.com, and export cookies in Netscape format."
@@ -193,16 +192,14 @@ class GamdlSetupScreen(QWidget):
         self._cookies_btn.clicked.connect(self._on_pick_cookies)
         self._cookies_card.add_control(self._cookies_btn)
         self._cookies_path_label = QLabel("Not set")
-        self._cookies_path_label.setStyleSheet(
-            "color: palette(mid); border: none; padding: 0; font-size: 11px;"
-        )
+        self._cookies_path_label.setProperty("class", "caption")
         self._cookies_card.add_control(self._cookies_path_label)
         self._cookies_card.add_stretch()
         cards_layout.addWidget(self._cookies_card)
 
         # Step 2 — wvd
-        self._wvd_card = _StepCard()
-        self._wvd_card.set_title("Step 2 — Widevine device file")
+        self._wvd_card = _StepCard(2)
+        self._wvd_card.set_title("Widevine device file")
         self._wvd_card.set_blurb(
             "A .wvd file from a Widevine L3 CDM dump. We can't host or "
             "distribute these — see the gamdl README for sources."
@@ -211,16 +208,14 @@ class GamdlSetupScreen(QWidget):
         self._wvd_btn.clicked.connect(self._on_pick_wvd)
         self._wvd_card.add_control(self._wvd_btn)
         self._wvd_path_label = QLabel("Not set")
-        self._wvd_path_label.setStyleSheet(
-            "color: palette(mid); border: none; padding: 0; font-size: 11px;"
-        )
+        self._wvd_path_label.setProperty("class", "caption")
         self._wvd_card.add_control(self._wvd_path_label)
         self._wvd_card.add_stretch()
         cards_layout.addWidget(self._wvd_card)
 
         # Step 3 — gamdl
-        self._gamdl_card = _StepCard()
-        self._gamdl_card.set_title("Step 3 — Install gamdl")
+        self._gamdl_card = _StepCard(3)
+        self._gamdl_card.set_title("Install gamdl")
         self._gamdl_card.set_blurb(
             "gamdl must be installed and on your PATH. Use the button to "
             "install or reinstall it via pip (--user)."
@@ -229,16 +224,14 @@ class GamdlSetupScreen(QWidget):
         self._gamdl_btn.clicked.connect(self._on_install_gamdl)
         self._gamdl_card.add_control(self._gamdl_btn)
         self._gamdl_version_label = QLabel("Not found")
-        self._gamdl_version_label.setStyleSheet(
-            "color: palette(mid); border: none; padding: 0; font-size: 11px;"
-        )
+        self._gamdl_version_label.setProperty("class", "caption")
         self._gamdl_card.add_control(self._gamdl_version_label)
         self._gamdl_card.add_stretch()
         cards_layout.addWidget(self._gamdl_card)
 
         # Step 4 — roll-up
-        self._summary_card = _StepCard()
-        self._summary_card.set_title("Step 4 — Ready to upgrade?")
+        self._summary_card = _StepCard(4)
+        self._summary_card.set_title("Ready to upgrade?")
         self._summary_card.set_blurb("")
         cards_layout.addWidget(self._summary_card)
 
@@ -249,11 +242,12 @@ class GamdlSetupScreen(QWidget):
         # Footer actions
         actions = QHBoxLayout()
         self._back_btn = QPushButton("← Back")
+        self._back_btn.setProperty("variant", "ghost")
         self._back_btn.clicked.connect(self.back_requested)
         actions.addWidget(self._back_btn)
         actions.addStretch(1)
         self._continue_btn = QPushButton("Continue to upgrade →")
-        self._continue_btn.setStyleSheet("padding: 6px 16px; font-weight: 600;")
+        self._continue_btn.setProperty("variant", "primary")
         self._continue_btn.clicked.connect(self.proceed_requested)
         actions.addWidget(self._continue_btn)
         outer.addLayout(actions)
@@ -363,7 +357,10 @@ class GamdlSetupScreen(QWidget):
 
         # Step 1
         cookies_ok = _path_is_readable(cookies)
-        self._cookies_card.set_status(cookies_ok, "ready" if cookies_ok else "missing")
+        if cookies_ok:
+            self._cookies_card.set_status("done", "Set · valid")
+        else:
+            self._cookies_card.set_status("block", "Missing")
         if cookies:
             self._cookies_path_label.setText(cookies)
             self._cookies_path_label.setToolTip(cookies)
@@ -373,7 +370,10 @@ class GamdlSetupScreen(QWidget):
 
         # Step 2
         wvd_ok = _path_is_readable(wvd)
-        self._wvd_card.set_status(wvd_ok, "ready" if wvd_ok else "missing")
+        if wvd_ok:
+            self._wvd_card.set_status("done", "Set · valid")
+        else:
+            self._wvd_card.set_status("block", "Missing")
         if wvd:
             self._wvd_path_label.setText(wvd)
             self._wvd_path_label.setToolTip(wvd)
@@ -384,18 +384,26 @@ class GamdlSetupScreen(QWidget):
         # Step 3
         version = _gamdl_version()
         gamdl_ok = version is not None
-        self._gamdl_card.set_status(gamdl_ok, "ready" if gamdl_ok else "not found")
+        if gamdl_ok:
+            short = (version or "").strip()
+            # Try to surface a short "v<X>" tail if one is present.
+            label = f"Installed · {short}" if short else "Installed"
+            self._gamdl_card.set_status("done", label)
+        else:
+            self._gamdl_card.set_status("block", "Not found")
         self._gamdl_version_label.setText(version or "Not found")
 
         # Step 4 — roll-up
         all_ok = cookies_ok and wvd_ok and gamdl_ok
         if all_ok:
-            self._summary_card.set_status(True, "all set")
+            self._summary_card.set_status("done", "All set")
             self._summary_card.set_blurb(
                 "All three prerequisites are ready. Click Continue to start "
                 "the lossless upgrade."
             )
             self._summary_card.set_detail("")
+            self._continue_btn.setVisible(True)
+            self._continue_btn.setEnabled(True)
         else:
             missing: list[str] = []
             if not cookies_ok:
@@ -404,11 +412,11 @@ class GamdlSetupScreen(QWidget):
                 missing.append("Widevine .wvd device file")
             if not gamdl_ok:
                 missing.append("gamdl on PATH")
-            self._summary_card.set_status(False, "blocked")
+            self._summary_card.set_status("warn", "Blocked")
             self._summary_card.set_blurb(
                 "Still missing: " + ", ".join(missing)
             )
             self._summary_card.set_detail(
                 "Fix the steps above; this section updates as you do."
             )
-        self._continue_btn.setEnabled(all_ok)
+            self._continue_btn.setEnabled(False)

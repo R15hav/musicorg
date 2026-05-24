@@ -27,7 +27,10 @@ a = Analysis(
     [str(SPEC_DIR / "launcher.py")],
     pathex=[str(SRC)],
     binaries=[],
-    datas=[],
+    datas=[
+        # Bundled fonts loaded by musicorg_gui.theme.load_fonts() at startup.
+        (str(SRC / "musicorg_gui" / "resources" / "fonts"), "musicorg_gui/resources/fonts"),
+    ],
     hiddenimports=[
         # Library — pulled in via musicorg_gui imports, but pin defensively.
         "musicorg",
