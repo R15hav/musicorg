@@ -102,6 +102,13 @@ class CustomOrderCanonicalizeWorker(LibraryWorker):
         state_dir.mkdir(parents=True, exist_ok=True)
         merged_path = state_dir / "16_merged.csv"
 
+        # Mirror ScanWorker's behaviour: skip the post-execute organize
+        # tree at ``<root>/Music/`` on re-runs so we don't process every
+        # track twice. The directory only matters as an exclude when it
+        # actually exists (first run is unaffected).
+        organized_root = (root / "Music").resolve()
+        skip_organized = organized_root.exists()
+
         files: list[Path] = []
         if root.exists():
             for p in root.rglob("*"):
@@ -111,6 +118,12 @@ class CustomOrderCanonicalizeWorker(LibraryWorker):
                     continue
                 if any(part in DEFAULT_EXCLUDE_DIR_NAMES for part in p.parts):
                     continue
+                if skip_organized:
+                    try:
+                        p.resolve().relative_to(organized_root)
+                        continue  # under <root>/Music/ — exclude
+                    except ValueError:
+                        pass  # not under <root>/Music/ — keep
                 files.append(p)
             files.sort()
 
