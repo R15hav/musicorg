@@ -324,25 +324,6 @@ class WelcomeScreen(QWidget):
         self._drop_zone.folder_chosen.connect(self._on_folder_chosen)
         outer.addWidget(self._drop_zone)
 
-        # Recent libraries --------------------------------------------------
-        self._recent_eyebrow = QLabel("Recent libraries")
-        self._recent_eyebrow.setProperty("class", "footnote")
-        outer.addSpacing(10)
-        outer.addWidget(self._recent_eyebrow)
-
-        self._recent_grid_host = QWidget()
-        self._recent_grid = QGridLayout(self._recent_grid_host)
-        self._recent_grid.setContentsMargins(0, 0, 0, 0)
-        self._recent_grid.setHorizontalSpacing(16)
-        self._recent_grid.setVerticalSpacing(16)
-        outer.addWidget(self._recent_grid_host)
-
-        self._recent_empty = QLabel(
-            "No libraries yet — drop a folder above to start your first run."
-        )
-        self._recent_empty.setProperty("class", "muted")
-        outer.addWidget(self._recent_empty)
-
         # New-run form ------------------------------------------------------
         outer.addSpacing(16)
 
@@ -406,6 +387,26 @@ class WelcomeScreen(QWidget):
         form_layout.addLayout(bottom_row)
 
         outer.addWidget(form_card)
+
+        # Recent libraries (last section) -----------------------------------
+        outer.addSpacing(16)
+        self._recent_eyebrow = QLabel("Recent libraries")
+        self._recent_eyebrow.setProperty("class", "footnote")
+        outer.addWidget(self._recent_eyebrow)
+
+        self._recent_grid_host = QWidget()
+        self._recent_grid = QGridLayout(self._recent_grid_host)
+        self._recent_grid.setContentsMargins(0, 0, 0, 0)
+        self._recent_grid.setHorizontalSpacing(16)
+        self._recent_grid.setVerticalSpacing(16)
+        outer.addWidget(self._recent_grid_host)
+
+        self._recent_empty = QLabel(
+            "No libraries yet — drop a folder above to start your first run."
+        )
+        self._recent_empty.setProperty("class", "muted")
+        outer.addWidget(self._recent_empty)
+
         outer.addStretch(1)
 
         # Pending folder state — set by drop-zone / folder dialog.
