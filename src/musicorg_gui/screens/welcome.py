@@ -30,7 +30,6 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -51,13 +50,6 @@ from .. import theme as t
 from ..library_index import KnownLibrary, delete_library_state, list_known_libraries
 from ..platform import state_root, symlink_supported
 from ..workers import ApplyMode
-
-
-_COUNTRIES = [
-    ("bollywood", "Bollywood"),
-    ("hollywood", "Hollywood"),
-    ("unknown", "Unknown"),
-]
 
 
 def _relative_when(when: datetime) -> str:
@@ -359,13 +351,6 @@ class WelcomeScreen(QWidget):
         mode_label = QLabel("Apply mode")
         mode_label.setProperty("class", "body")
         form.addRow(mode_label, mode_box)
-
-        self._country_combo = QComboBox()
-        for value, label in _COUNTRIES:
-            self._country_combo.addItem(label, userData=value)
-        country_label = QLabel("Default country")
-        country_label.setProperty("class", "body")
-        form.addRow(country_label, self._country_combo)
         form_layout.addLayout(form)
 
         # Pending folder display + Start button
@@ -430,7 +415,6 @@ class WelcomeScreen(QWidget):
             if btn.property("value") == "move":
                 btn.setChecked(True)
                 break
-        self._country_combo.setCurrentIndex(0)
         self._start_btn.setEnabled(False)
         self._refresh_recent()
 
@@ -485,9 +469,11 @@ class WelcomeScreen(QWidget):
         root = self._pending_folder.resolve()
         if not root.is_dir():
             return
-        country = self._country_combo.currentData() or "bollywood"
         cfg = load_config(root=root, state_root=state_root())
-        cfg.default_country = country
+        # default_country is the fallback for songs detect_country() can't
+        # resolve even after the metadata phase canonicalises tags. The user
+        # no longer picks one — bollywood stays as a benign fallback that
+        # matches detect_country's own default.
         cfg.apply_mode = self._selected_mode()
         ensure_state_dir(cfg)
         self.start_requested.emit(cfg, root, self._selected_mode())

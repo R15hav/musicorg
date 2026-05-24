@@ -22,7 +22,6 @@ from .platform import state_root
 from .screens import (
     CompletionScreen,
     GamdlSetupScreen,
-    MetadataScreen,
     PipelineScreen,
     UndoScreen,
     UpgradeScreen,
@@ -58,16 +57,16 @@ class MainWindow(QMainWindow):
         self._pipeline = PipelineScreen(self)
         self._completion = CompletionScreen(self)
         self._undo = UndoScreen(self)
-        self._metadata = MetadataScreen(self)
         self._gamdl_setup = GamdlSetupScreen(self)
         self._upgrade = UpgradeScreen(self)
+        # Settings gear remembers where to return to.
+        self._settings_return_to: Any = None
 
         for screen in (
             self._welcome,
             self._pipeline,
             self._completion,
             self._undo,
-            self._metadata,
             self._gamdl_setup,
             self._upgrade,
         ):
@@ -82,14 +81,12 @@ class MainWindow(QMainWindow):
         self._pipeline.failed_out.connect(lambda _msg: None)
         self._completion.restart_requested.connect(self._go_to_welcome)
         self._completion.undo_requested.connect(self._show_undo)
-        self._completion.metadata_requested.connect(self._show_metadata)
         self._completion.upgrade_requested.connect(self._show_upgrade)
         self._undo.back_requested.connect(self._show_completion)
-        self._metadata.back_requested.connect(self._show_completion)
         self._upgrade.back_requested.connect(self._show_completion)
-        self._upgrade.setup_requested.connect(self._show_gamdl_setup)
-        self._gamdl_setup.back_requested.connect(self._show_upgrade)
-        self._gamdl_setup.proceed_requested.connect(self._show_upgrade)
+        self._upgrade.setup_requested.connect(self._show_gamdl_setup_from_upgrade)
+        self._gamdl_setup.back_requested.connect(self._return_from_gamdl_setup)
+        self._gamdl_setup.proceed_requested.connect(self._return_from_gamdl_setup)
 
         # TopBar wiring
         self._topbar.library_clicked.connect(self._go_to_welcome)
@@ -173,24 +170,39 @@ class MainWindow(QMainWindow):
         self._refresh_undo_chip()
         self._stack.setCurrentWidget(self._completion)
 
-    def _show_metadata(self) -> None:
-        if self._active_cfg is None:
-            return
-        self._stack.setCurrentWidget(self._metadata)
-        self._metadata.show_for(self._active_cfg)
-
     def _show_upgrade(self) -> None:
         if self._active_cfg is None:
             return
         self._stack.setCurrentWidget(self._upgrade)
         self._upgrade.show_for(self._active_cfg)
 
-    def _show_gamdl_setup(self) -> None:
-        if self._active_cfg is None:
-            return
+    def _show_gamdl_setup_from_upgrade(self) -> None:
+        """Open gamdl setup with the Upgrade screen as the return target."""
+        self._settings_return_to = self._upgrade
+        if self._active_cfg is not None:
+            self._gamdl_setup.show_for(self._active_cfg)
         self._stack.setCurrentWidget(self._gamdl_setup)
-        self._gamdl_setup.show_for(self._active_cfg)
+
+    def _show_gamdl_setup_from_topbar(self) -> None:
+        """Open gamdl setup from the topbar gear. Return to wherever we were."""
+        self._settings_return_to = self._stack.currentWidget()
+        if self._active_cfg is not None:
+            self._gamdl_setup.show_for(self._active_cfg)
+        else:
+            # No library context — the screen still works for paths + install
+            # state since cookies/wvd paths are global, not per-library.
+            from musicorg import load_config
+
+            self._gamdl_setup.show_for(load_config(state_root=state_root()))
+        self._stack.setCurrentWidget(self._gamdl_setup)
+
+    def _return_from_gamdl_setup(self) -> None:
+        target = self._settings_return_to or self._welcome
+        self._settings_return_to = None
+        self._stack.setCurrentWidget(target)
 
     def _on_settings_clicked(self) -> None:
-        # Settings dialog is a future slice; for now this is a no-op.
-        pass
+        # Topbar gear opens gamdl setup — currently the only "settings"
+        # surface the GUI has, and it works regardless of whether a library
+        # is loaded since cookies/.wvd paths are global config.
+        self._show_gamdl_setup_from_topbar()

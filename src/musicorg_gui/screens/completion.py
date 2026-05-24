@@ -103,6 +103,8 @@ class _ActionTile(QFrame):
 
 
 class CompletionScreen(QWidget):
+    # metadata_requested is retained as a deprecated no-op signal so the
+    # existing MainWindow connect doesn't break during the wiring update.
     metadata_requested = Signal()
     upgrade_requested = Signal()
     undo_requested = Signal()
@@ -153,31 +155,21 @@ class CompletionScreen(QWidget):
         next_label.setProperty("class", "footnote")
         outer.addWidget(next_label)
 
+        # Three tiles. Metadata is folded into Stage 1's auto-pipeline now,
+        # so there's no "Retrieve metadata" entry point here. Upgrade is the
+        # lead post-organize action.
         tiles_row = QHBoxLayout()
         tiles_row.setSpacing(14)
-
-        meta_tile = _ActionTile(
-            "metadata",
-            "Retrieve metadata",
-            "Look up canonical title / artist / album / year via iTunes, "
-            "JioSaavn, and Shazam. Rewrites tags with an undo script.",
-            primary=True,
-        )
-        meta_tile.clicked.connect(self._on_metadata)
-        tiles_row.addWidget(meta_tile, 1)
 
         upgrade_tile = _ActionTile(
             "upgrade",
             "Upgrade to lossless",
             "Replace lossy tracks with ALAC via gamdl. Needs Apple Music "
-            "cookies and a Widevine device file (set up separately).",
+            "cookies and a Widevine device file.",
+            primary=True,
         )
         upgrade_tile.clicked.connect(self._on_upgrade)
         tiles_row.addWidget(upgrade_tile, 1)
-        outer.addLayout(tiles_row)
-
-        tiles_row2 = QHBoxLayout()
-        tiles_row2.setSpacing(14)
 
         undo_tile = _ActionTile(
             "undo",
@@ -186,7 +178,7 @@ class CompletionScreen(QWidget):
             "Revert any step.",
         )
         undo_tile.clicked.connect(self._on_undo)
-        tiles_row2.addWidget(undo_tile, 1)
+        tiles_row.addWidget(undo_tile, 1)
 
         another_tile = _ActionTile(
             "restart",
@@ -195,8 +187,8 @@ class CompletionScreen(QWidget):
             "so this doesn't touch the one you just finished.",
         )
         another_tile.clicked.connect(self._on_restart)
-        tiles_row2.addWidget(another_tile, 1)
-        outer.addLayout(tiles_row2)
+        tiles_row.addWidget(another_tile, 1)
+        outer.addLayout(tiles_row)
 
         outer.addStretch(1)
 
@@ -302,10 +294,6 @@ class CompletionScreen(QWidget):
             phases_value=phases_label,
             phases_label="Phases done",
         )
-
-    @Slot(str)
-    def _on_metadata(self, _key: str) -> None:
-        self.metadata_requested.emit()
 
     @Slot(str)
     def _on_upgrade(self, _key: str) -> None:
